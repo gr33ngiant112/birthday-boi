@@ -7,12 +7,14 @@ import discord
 from dotenv import load_dotenv
 import datetime
 
-# Load environment variables
-load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
-
-# Connect to Redis using the Heroku Redis URL
-REDIS_URL = os.getenv('REDIS_URL')
+# If running on Heroku, DYNO will be set; otherwise load .env for local testing.
+if os.getenv("DYNO"):
+    TOKEN = os.getenv("DISCORD_TOKEN")
+    REDIS_URL = os.getenv("REDIS_URL")
+else:
+    load_dotenv()
+    TOKEN = os.getenv("DISCORD_TOKEN")
+    REDIS_URL = os.getenv("REDIS_URL")
 
 # Initialize Redis client
 redis_client = redis.from_url(REDIS_URL)
