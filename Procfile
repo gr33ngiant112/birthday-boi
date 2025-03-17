@@ -1,2 +1,2 @@
 worker: python bot.py
-release: ./heroku_release.shs
+release: ./heroku_release.sh
