@@ -159,6 +159,7 @@ async def forecast_bdays(interaction: discord.Interaction, broadcast: bool = Fal
     upcoming_birthdays = []
     next_month = (today.month % 12) + 1
     month_after = ((today.month + 1) % 12) + 1
+
     for user_id, birthday_str in birthdays:
         try:
             bd = datetime.date.fromisoformat(birthday_str)
@@ -172,6 +173,7 @@ async def forecast_bdays(interaction: discord.Interaction, broadcast: bool = Fal
                 upcoming_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
         except Exception as e:
             print(f"❌ Error processing birthday for user {user_id}: {e}")
+
     if not current_month_birthdays and not upcoming_birthdays:
         msg = "❌ No upcoming birthdays found."
     else:
@@ -187,8 +189,24 @@ async def forecast_bdays(interaction: discord.Interaction, broadcast: bool = Fal
             msg += "\n".join([f"<@{uid}>: {date}" for uid, date in current_month_birthdays])
         if upcoming_birthdays:
             msg += "\n..and just around the bend:\n" + "\n".join([f"<@{uid}>: {date}" for uid, date in upcoming_birthdays])
+    
     # Send the forecast as broadcast or privately.
-    await interaction.response.send_message(msg, ephemeral=not broadcast)
+    if broadcast:
+        # Locate the guild's 'general' channel or use the first available text channel.
+        channel = discord.utils.get(interaction.guild.text_channels, name="general")
+        if channel is None and interaction.guild.text_channels:
+            channel = interaction.guild.text_channels[0]
+        if channel:
+            try:
+                await channel.send("@everyone " + msg)
+                await interaction.response.send_message("Broadcast sent to the server.", ephemeral=True)
+            except Exception as e:
+                print(f"❌ Error sending broadcast in {interaction.guild.name}: {e}")
+                await interaction.response.send_message("❌ Error sending broadcast.", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Could not find a suitable channel to broadcast.", ephemeral=True)
+    else:
+        await interaction.response.send_message(msg, ephemeral=True)
 
 # Background task to check for upcoming birthdays on the first day of each month
 @tasks.loop(hours=24)
@@ -202,6 +220,7 @@ async def check_upcoming_birthdays():
     upcoming_birthdays = []
     next_month = (today.month % 12) + 1
     month_after = ((today.month + 1) % 12) + 1
+
     for user_id, birthday_str in birthdays:
         try:
             # Parse the stored birthday; ignore stored year and compute next occurrence.
@@ -216,6 +235,7 @@ async def check_upcoming_birthdays():
                 upcoming_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
         except Exception as e:
             print(f"❌ Error processing birthday for user {user_id}: {e}")
+    
     if current_month_birthdays or upcoming_birthdays:
         sassy_phrases = [
             "You'd better not forget these birthdays coming up... or else..",
@@ -229,14 +249,14 @@ async def check_upcoming_birthdays():
             message += "\n".join([f"<@{uid}>: {date}" for uid, date in current_month_birthdays])
         if upcoming_birthdays:
             message += "\n..and just around the bend:\n" + "\n".join([f"<@{uid}>: {date}" for uid, date in upcoming_birthdays])
-        # Send the message to each guild's 'general' or first available text channel.
+        # Send the message to each guild's 'general' or first available text channel with an @everyone ping.
         for guild in client.guilds:
             channel = discord.utils.get(guild.text_channels, name="general")
             if channel is None and guild.text_channels:
                 channel = guild.text_channels[0]
             if channel:
                 try:
-                    await channel.send(message)
+                    await channel.send("@everyone " + message)
                 except Exception as e:
                     print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
 
