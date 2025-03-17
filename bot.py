@@ -2,11 +2,12 @@
 import os
 import redis
 import ssl
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import discord
 from dotenv import load_dotenv
 import datetime
+import random
 
 # If running on Heroku, DYNO will be set; otherwise load .env for local testing.
 if os.getenv("DYNO"):
@@ -73,6 +74,8 @@ class MyClient(discord.Client):
 
     async def setup_hook(self):
         await self.tree.sync()
+        # Start the upcoming birthdays task after commands are synced.
+        check_upcoming_birthdays.start()
 
 # Instantiate the client
 client = MyClient()
@@ -149,6 +152,49 @@ async def list_birthdays(interaction: discord.Interaction):
         await interaction.followup.send(message)
     else:
         await interaction.followup.send("❌ No birthdays have been set yet.")
+
+# Background task to check for upcoming birthdays on the first day of each month
+@tasks.loop(hours=24)
+async def check_upcoming_birthdays():
+    today = datetime.date.today()
+    # Only run on the first day of the month.
+    if today.day != 1:
+        return
+
+    birthdays = get_all_birthdays_redis()
+    upcoming = []
+    for user_id, birthday_str in birthdays:
+        try:
+            # Parse the stored birthday; ignore stored year and compute next occurrence.
+            bd = datetime.date.fromisoformat(birthday_str)
+            upcoming_bd = datetime.date(today.year, bd.month, bd.day)
+            if upcoming_bd < today:
+                upcoming_bd = datetime.date(today.year + 1, bd.month, bd.day)
+            diff = (upcoming_bd - today).days
+            if diff < 30:
+                upcoming.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
+        except Exception as e:
+            print(f"❌ Error processing birthday for user {user_id}: {e}")
+
+    if upcoming:
+        sassy_phrases = [
+            "You'd better not forget these birthdays coming up... or else..",
+            "ALERT: OLD PEOPLE GETTING OLDER THIS MONTH",
+            "Don't say I didn't warn you: upcoming birthdays:",
+            "Incoming! Look who gets a little closer to the sweet release of death this month!"
+        ]
+        phrase = random.choice(sassy_phrases)
+        message = phrase + "\n" + "\n".join([f"<@{uid}>: {date}" for uid, date in upcoming])
+        # Send the message to each guild's 'general' or first available text channel.
+        for guild in client.guilds:
+            channel = discord.utils.get(guild.text_channels, name="general")
+            if channel is None and guild.text_channels:
+                channel = guild.text_channels[0]
+            if channel:
+                try:
+                    await channel.send(message)
+                except Exception as e:
+                    print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
 
 # Run the bot
 client.run(TOKEN)
