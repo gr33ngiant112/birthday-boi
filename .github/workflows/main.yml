@@ -1,0 +1,11 @@
+---
+name: check
+on:
+  push:
+    branches:
+        - main
+    paths:
+        - *
+  pull_request:
+    branches
+        - main 
