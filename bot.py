@@ -88,30 +88,44 @@ async def on_ready():
         print(f"❌ Error syncing commands: {e}")
 
 # Command to set birthday (fixes unknown interaction error)
-@client.tree.command(name="set_birthday", description="Set your birthday (format: YYYY-MM-DD)")
-@app_commands.describe(date="The date of your birthday (YYYY-MM-DD)")
+@client.tree.command(name="set_birthday", description="Set your birthday (format: MM-DD-YYYY or YYYY-MM-DD)")
+@app_commands.describe(date="The date of your birthday (MM-DD-YYYY or YYYY-MM-DD)")
 async def set_birthday(interaction: discord.Interaction, date: str):
     await interaction.response.defer(ephemeral=True)  # Prevent Discord timeout
 
     user_id = interaction.user.id
     try:
-        # Validate date
-        birthday_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
-        set_birthday_redis(user_id, birthday_date.isoformat())  # Store in Redis
-
-        await interaction.followup.send(f"✅ Your birthday has been set to {birthday_date}.", ephemeral=True)
+        # Try MM-DD-YYYY first, then fallback to YYYY-MM-DD
+        try:
+            birthday_date = datetime.datetime.strptime(date, "%m-%d-%Y").date()
+        except ValueError:
+            birthday_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
+        # Store in Redis in ISO format (YYYY-MM-DD)
+        set_birthday_redis(user_id, birthday_date.isoformat())
+        # Respond with birthday formatted as MM-DD-YYYY
+        await interaction.followup.send(f"✅ Your birthday has been set to {birthday_date.strftime('%m-%d-%Y')}.", ephemeral=True)
     except ValueError:
-        await interaction.followup.send("❌ Invalid date format! Use YYYY-MM-DD.", ephemeral=True)
+        await interaction.followup.send("❌ Invalid date format! Use MM-DD-YYYY or YYYY-MM-DD.", ephemeral=True)
 
 # Command to query birthday
 @client.tree.command(name="get_birthday", description="Get a user's birthday")
 @app_commands.describe(user="The user whose birthday you want to query")
 async def get_birthday(interaction: discord.Interaction, user: discord.Member):
-    user_id = user.id
-    birthday_date = get_birthday_redis(user_id)  # Retrieve from Redis
+    # If the queried user is the bot itself, return the special message.
+    if user.id == client.user.id:
+        await interaction.response.send_message(f"<@{interaction.user.id}> Foolish mop. I have no beginning, and I have no end.")
+        return
 
-    if birthday_date:
-        await interaction.response.send_message(f"🎂 {user.display_name}'s birthday is on {birthday_date}.")
+    user_id = user.id
+    birthday_str = get_birthday_redis(user_id)  # Retrieve from Redis
+
+    if birthday_str:
+        try:
+            birthday_date = datetime.date.fromisoformat(birthday_str)
+            formatted_date = birthday_date.strftime("%m-%d-%Y")
+        except Exception:
+            formatted_date = birthday_str
+        await interaction.response.send_message(f"🎂 {user.display_name}'s birthday is on {formatted_date}.")
     else:
         await interaction.response.send_message(f"❌ {user.display_name} has not set their birthday yet.")
 
@@ -122,8 +136,16 @@ async def list_birthdays(interaction: discord.Interaction):
 
     birthdays = get_all_birthdays_redis()  # Retrieve all birthdays from Redis
     if birthdays:
-        birthday_list = [f"<@{user_id}>: {date}" for user_id, date in birthdays]
-        message = "🎉 **Server Birthdays:**\n" + "\n".join(birthday_list)
+        birthday_list = []
+        for user_id, date_str in birthdays:
+            try:
+                birthday_date = datetime.date.fromisoformat(date_str)
+                formatted_date = birthday_date.strftime("%m-%d-%Y")
+            except Exception:
+                formatted_date = date_str
+            birthday_list.append(f"<@{user_id}>: {formatted_date}")
+        guild_name = interaction.guild.name if interaction.guild else "Server"
+        message = f"🎉 **{guild_name} Birthdays:**\n" + "\n".join(birthday_list)
         await interaction.followup.send(message)
     else:
         await interaction.followup.send("❌ No birthdays have been set yet.")
