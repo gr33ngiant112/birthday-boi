@@ -68,6 +68,11 @@ client = MyClient()
 @client.event
 async def on_ready():
     print(f'Logged in as {client.user}')
+    try:
+        await client.tree.sync()
+        print("✅ Slash commands synced successfully!")
+    except Exception as e:
+        print(f"❌ Error syncing commands: {e}")
 
 # Command to set birthday
 @client.tree.command(name="set_birthday", description="Set your birthday (format: YYYY-MM-DD)")
