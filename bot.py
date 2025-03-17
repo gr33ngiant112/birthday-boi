@@ -153,6 +153,50 @@ async def list_birthdays(interaction: discord.Interaction):
     else:
         await interaction.followup.send("❌ No birthdays have been set yet.")
 
+@client.tree.command(name="forecast_bdays", description="Forecast upcoming birthdays for current and next two months")
+@app_commands.describe(broadcast="If true, sends the forecast publicly in the channel; otherwise, only you can see it")
+async def forecast_bdays(interaction: discord.Interaction, broadcast: bool = False):
+    today = datetime.date.today()
+    birthdays = get_all_birthdays_redis()
+    current_month_birthdays = []
+    upcoming_birthdays = []
+
+    next_month = (today.month % 12) + 1
+    month_after = ((today.month + 1) % 12) + 1
+
+    for user_id, birthday_str in birthdays:
+        try:
+            bd = datetime.date.fromisoformat(birthday_str)
+            upcoming_bd = datetime.date(today.year, bd.month, bd.day)
+            if upcoming_bd < today:
+                upcoming_bd = datetime.date(today.year + 1, bd.month, bd.day)
+            # Group birthdays: current month vs. next two months.
+            if upcoming_bd.month == today.month:
+                current_month_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
+            elif upcoming_bd.month in [next_month, month_after]:
+                upcoming_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
+        except Exception as e:
+            print(f"❌ Error processing birthday for user {user_id}: {e}")
+
+    if not current_month_birthdays and not upcoming_birthdays:
+        msg = "❌ No upcoming birthdays found."
+    else:
+        sassy_phrases = [
+            "You'd better not forget these birthdays coming up... or else..",
+            "ALERT: OLD PEOPLE GETTING OLDER THIS MONTH",
+            "Don't say I didn't warn you: upcoming birthdays:",
+            "Incoming! Look who gets a little closer to the sweet release of death this month!"
+        ]
+        phrase = random.choice(sassy_phrases)
+        msg = phrase + "\n"
+        if current_month_birthdays:
+            msg += "\n".join([f"<@{uid}>: {date}" for uid, date in current_month_birthdays])
+        if upcoming_birthdays:
+            msg += "\n..and just around the bend:\n" + "\n".join([f"<@{uid}>: {date}" for uid, date in upcoming_birthdays])
+
+    # Send the forecast as broadcast or privately.
+    await interaction.response.send_message(msg, ephemeral=not broadcast)
+
 # Background task to check for upcoming birthdays on the first day of each month
 @tasks.loop(hours=24)
 async def check_upcoming_birthdays():
