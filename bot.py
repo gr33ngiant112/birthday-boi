@@ -17,14 +17,14 @@ else:
     TOKEN = os.getenv("DISCORD_TOKEN")
     REDIS_URL = os.getenv("REDIS_URL")
 
-# Function to initialize Redis with SSL handling
+# Function to initialize Redis with SSL handling and timeouts
 def create_redis_client():
     return redis.from_url(
         REDIS_URL,
         decode_responses=True,  # Ensures Redis returns strings instead of bytes
         ssl_cert_reqs=ssl.CERT_NONE,  # Correctly handles SSL for Heroku Redis
-        socket_timeout=5,
-        socket_connect_timeout=5,
+        socket_timeout=10,
+        socket_connect_timeout=10,
         retry_on_timeout=True
     )
 
@@ -87,18 +87,21 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Error syncing commands: {e}")
 
-# Command to set birthday
+# Command to set birthday (fixes unknown interaction error)
 @client.tree.command(name="set_birthday", description="Set your birthday (format: YYYY-MM-DD)")
 @app_commands.describe(date="The date of your birthday (YYYY-MM-DD)")
 async def set_birthday(interaction: discord.Interaction, date: str):
+    await interaction.response.defer(ephemeral=True)  # Prevent Discord timeout
+
     user_id = interaction.user.id
     try:
         # Validate date
         birthday_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
         set_birthday_redis(user_id, birthday_date.isoformat())  # Store in Redis
-        await interaction.response.send_message(f"✅ Your birthday has been set to {birthday_date}.", ephemeral=True)
+
+        await interaction.followup.send(f"✅ Your birthday has been set to {birthday_date}.", ephemeral=True)
     except ValueError:
-        await interaction.response.send_message("❌ Invalid date format! Use YYYY-MM-DD.", ephemeral=True)
+        await interaction.followup.send("❌ Invalid date format! Use YYYY-MM-DD.", ephemeral=True)
 
 # Command to query birthday
 @client.tree.command(name="get_birthday", description="Get a user's birthday")
@@ -106,6 +109,7 @@ async def set_birthday(interaction: discord.Interaction, date: str):
 async def get_birthday(interaction: discord.Interaction, user: discord.Member):
     user_id = user.id
     birthday_date = get_birthday_redis(user_id)  # Retrieve from Redis
+
     if birthday_date:
         await interaction.response.send_message(f"🎂 {user.display_name}'s birthday is on {birthday_date}.")
     else:
@@ -114,13 +118,15 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
 # Command to list all birthdays
 @client.tree.command(name="list_birthdays", description="List all birthdays on the server")
 async def list_birthdays(interaction: discord.Interaction):
+    await interaction.response.defer()  # Prevent timeout while fetching data
+
     birthdays = get_all_birthdays_redis()  # Retrieve all birthdays from Redis
     if birthdays:
         birthday_list = [f"<@{user_id}>: {date}" for user_id, date in birthdays]
         message = "🎉 **Server Birthdays:**\n" + "\n".join(birthday_list)
-        await interaction.response.send_message(message)
+        await interaction.followup.send(message)
     else:
-        await interaction.response.send_message("❌ No birthdays have been set yet.")
+        await interaction.followup.send("❌ No birthdays have been set yet.")
 
 # Run the bot
 client.run(TOKEN)
