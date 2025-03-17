@@ -90,12 +90,11 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Error syncing commands: {e}")
 
-# Command to set birthday (fixes unknown interaction error)
+# Command to set birthday
 @client.tree.command(name="set_birthday", description="Set your birthday (format: MM-DD-YYYY or YYYY-MM-DD)")
 @app_commands.describe(date="The date of your birthday (MM-DD-YYYY or YYYY-MM-DD)")
 async def set_birthday(interaction: discord.Interaction, date: str):
     await interaction.response.defer(ephemeral=True)  # Prevent Discord timeout
-
     user_id = interaction.user.id
     try:
         # Try MM-DD-YYYY first, then fallback to YYYY-MM-DD
@@ -118,10 +117,8 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
     if user.id == client.user.id:
         await interaction.response.send_message(f"<@{interaction.user.id}> Foolish mop. I have no beginning, and I have no end.")
         return
-
     user_id = user.id
     birthday_str = get_birthday_redis(user_id)  # Retrieve from Redis
-
     if birthday_str:
         try:
             birthday_date = datetime.date.fromisoformat(birthday_str)
@@ -136,7 +133,6 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
 @client.tree.command(name="list_birthdays", description="List all birthdays on the server")
 async def list_birthdays(interaction: discord.Interaction):
     await interaction.response.defer()  # Prevent timeout while fetching data
-
     birthdays = get_all_birthdays_redis()  # Retrieve all birthdays from Redis
     if birthdays:
         birthday_list = []
@@ -153,6 +149,7 @@ async def list_birthdays(interaction: discord.Interaction):
     else:
         await interaction.followup.send("❌ No birthdays have been set yet.")
 
+# Manual command to forecast upcoming birthdays
 @client.tree.command(name="forecast_bdays", description="Forecast upcoming birthdays for current and next two months")
 @app_commands.describe(broadcast="If true, sends the forecast publicly in the channel; otherwise, only you can see it")
 async def forecast_bdays(interaction: discord.Interaction, broadcast: bool = False):
@@ -160,10 +157,8 @@ async def forecast_bdays(interaction: discord.Interaction, broadcast: bool = Fal
     birthdays = get_all_birthdays_redis()
     current_month_birthdays = []
     upcoming_birthdays = []
-
     next_month = (today.month % 12) + 1
     month_after = ((today.month + 1) % 12) + 1
-
     for user_id, birthday_str in birthdays:
         try:
             bd = datetime.date.fromisoformat(birthday_str)
@@ -177,7 +172,6 @@ async def forecast_bdays(interaction: discord.Interaction, broadcast: bool = Fal
                 upcoming_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
         except Exception as e:
             print(f"❌ Error processing birthday for user {user_id}: {e}")
-
     if not current_month_birthdays and not upcoming_birthdays:
         msg = "❌ No upcoming birthdays found."
     else:
@@ -193,7 +187,6 @@ async def forecast_bdays(interaction: discord.Interaction, broadcast: bool = Fal
             msg += "\n".join([f"<@{uid}>: {date}" for uid, date in current_month_birthdays])
         if upcoming_birthdays:
             msg += "\n..and just around the bend:\n" + "\n".join([f"<@{uid}>: {date}" for uid, date in upcoming_birthdays])
-
     # Send the forecast as broadcast or privately.
     await interaction.response.send_message(msg, ephemeral=not broadcast)
 
@@ -204,14 +197,11 @@ async def check_upcoming_birthdays():
     # Only run on the first day of the month.
     if today.day != 1:
         return
-
     birthdays = get_all_birthdays_redis()
     current_month_birthdays = []
     upcoming_birthdays = []
-
     next_month = (today.month % 12) + 1
     month_after = ((today.month + 1) % 12) + 1
-
     for user_id, birthday_str in birthdays:
         try:
             # Parse the stored birthday; ignore stored year and compute next occurrence.
@@ -226,7 +216,6 @@ async def check_upcoming_birthdays():
                 upcoming_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
         except Exception as e:
             print(f"❌ Error processing birthday for user {user_id}: {e}")
-
     if current_month_birthdays or upcoming_birthdays:
         sassy_phrases = [
             "You'd better not forget these birthdays coming up... or else..",
@@ -236,12 +225,10 @@ async def check_upcoming_birthdays():
         ]
         phrase = random.choice(sassy_phrases)
         message = phrase + "\n"
-        
         if current_month_birthdays:
             message += "\n".join([f"<@{uid}>: {date}" for uid, date in current_month_birthdays])
         if upcoming_birthdays:
             message += "\n..and just around the bend:\n" + "\n".join([f"<@{uid}>: {date}" for uid, date in upcoming_birthdays])
-        
         # Send the message to each guild's 'general' or first available text channel.
         for guild in client.guilds:
             channel = discord.utils.get(guild.text_channels, name="general")
