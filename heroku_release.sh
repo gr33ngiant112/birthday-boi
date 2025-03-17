@@ -2,12 +2,30 @@
 
 echo "🚀 Running Heroku Release Script for Worker Dyno Setup..."
 
-# Scale worker dyno (ensures it starts automatically after deployment)
-echo "🔧 Scaling worker dyno to 1..."
-heroku ps:scale worker=1 -a $HEROKU_APP_NAME
+# Ensure HEROKU_APP_NAME is set
+if [ -z "$HEROKU_APP_NAME" ]; then
+  echo "❌ ERROR: HEROKU_APP_NAME is not set! Exiting..."
+  exit 1
+fi
 
-# Restart the app to ensure changes take effect
+# Ensure HEROKU_API_KEY is set
+if [ -z "$HEROKU_API_KEY" ]; then
+  echo "❌ ERROR: HEROKU_API_KEY is not set! Exiting..."
+  exit 1
+fi
+
+# Scale worker dyno to 1 using Heroku API
+echo "🔧 Scaling worker dyno to 1..."
+curl -n -X PATCH "https://api.heroku.com/apps/$HEROKU_APP_NAME/formation/worker" \
+-H "Accept: application/vnd.heroku+json; version=3" \
+-H "Authorization: Bearer $HEROKU_API_KEY" \
+-H "Content-Type: application/json" \
+-d '{"quantity":1}'
+
+# Restart the app using Heroku API
 echo "🔄 Restarting app..."
-heroku restart -a $HEROKU_APP_NAME
+curl -n -X DELETE "https://api.heroku.com/apps/$HEROKU_APP_NAME/dynos" \
+-H "Accept: application/vnd.heroku+json; version=3" \
+-H "Authorization: Bearer $HEROKU_API_KEY"
 
 echo "✅ Heroku worker dyno setup complete!"
