@@ -4,7 +4,8 @@ redis
 wheel
 setuptools>=65.5.1
 cython==0.29.37
-numpy==1.24.3
+numpy==1.23.5
 spacy==3.5.4
 thinc==8.1.12
+--no-binary=numpy,thinc
 https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.5.0/en_core_web_sm-3.5.0.tar.gz
