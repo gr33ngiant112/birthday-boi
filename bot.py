@@ -9,9 +9,11 @@ import datetime
 import random
 import asyncio
 import spacy  # Add spaCy for natural language processing
+import en_core_web_sm
 
 # Load spaCy's English language model
-nlp = spacy.load("en_core_web_sm")
+# nlp = spacy.load("en_core_web_sm")
+nlp = en_core_web_sm.load()
 
 # If running on Heroku, DYNO will be set; otherwise load .env for local testing.
 if os.getenv("DYNO"):
