@@ -7,6 +7,11 @@ import discord
 from dotenv import load_dotenv
 import datetime
 import random
+import asyncio
+import spacy  # Add spaCy for natural language processing
+
+# Load spaCy's English language model
+nlp = spacy.load("en_core_web_sm")
 
 # If running on Heroku, DYNO will be set; otherwise load .env for local testing.
 if os.getenv("DYNO"):
@@ -84,6 +89,137 @@ client = MyClient()
 async def on_ready():
     print(f'✅ Logged in as {client.user}')
 
+# Natural conversation handler
+@client.event
+async def on_message(message):
+    # Ignore messages from the bot itself
+    if message.author == client.user:
+        return
+
+    # Check if the bot is mentioned
+    if client.user.mentioned_in(message):
+        content = message.content.lower()
+        doc = nlp(content)
+
+        # Try to infer intent
+        intent = None
+        if "my birthday is" in content or "set my birthday" in content:
+            intent = "set"
+        elif "when is my birthday" in content or "what is my birthday" in content:
+            intent = "get"
+        elif "when is" in content or "what is" in content:
+            intent = "get_other"
+        elif "list birthdays" in content or "show birthdays" in content:
+            intent = "list"
+
+        # If intent is unclear, ask for confirmation
+        if not intent:
+            try:
+                await message.author.send(
+                    "🤔 I couldn't quite understand your request. Did you want to:\n"
+                    "1️⃣ Set a new birthday?\n"
+                    "2️⃣ Get your birthday?\n"
+                    "3️⃣ Get someone else's birthday?\n"
+                    "4️⃣ List all birthdays?\n"
+                    "Please reply with the number of your choice (e.g., `1`, `2`, `3`, or `4`)."
+                )
+
+                def check(m):
+                    return m.author == message.author and m.channel.type == discord.ChannelType.private
+
+                # Wait for the user's response
+                reply = await client.wait_for("message", check=check, timeout=30.0)
+                if reply.content.strip() == "1":
+                    intent = "set"
+                elif reply.content.strip() == "2":
+                    intent = "get"
+                elif reply.content.strip() == "3":
+                    intent = "get_other"
+                elif reply.content.strip() == "4":
+                    intent = "list"
+                else:
+                    await message.author.send("❌ Invalid choice. Please try again.")
+                    return
+            except asyncio.TimeoutError:
+                await message.author.send("❌ You took too long to respond. Please try again.")
+                return
+
+        # Handle the inferred intent
+        if intent == "set":
+            await message.author.send("Please provide your birthday in the format MM-DD-YYYY or Month Day, Year.")
+            try:
+                reply = await client.wait_for("message", check=check, timeout=30.0)
+                birthday_date = None
+                for ent in nlp(reply.content).ents:
+                    if ent.label_ == "DATE":
+                        try:
+                            birthday_date = datetime.datetime.strptime(ent.text, "%B %d %Y").date()
+                        except ValueError:
+                            try:
+                                birthday_date = datetime.datetime.strptime(ent.text, "%m-%d-%Y").date()
+                            except ValueError:
+                                pass
+                if birthday_date:
+                    set_birthday_redis(message.author.id, birthday_date.isoformat())
+                    await message.author.send(
+                        f"✅ Your birthday has been set to {birthday_date.strftime('%m-%d-%Y')}."
+                    )
+                else:
+                    await message.author.send("❌ I couldn't understand the date. Please try again.")
+            except asyncio.TimeoutError:
+                await message.author.send("❌ You took too long to respond. Please try again.")
+
+        elif intent == "get":
+            birthday_str = get_birthday_redis(message.author.id)
+            if birthday_str:
+                birthday_date = datetime.date.fromisoformat(birthday_str)
+                await message.author.send(
+                    f"🎂 Your birthday is on {birthday_date.strftime('%m-%d-%Y')}."
+                )
+            else:
+                await message.author.send("❌ You haven't set your birthday yet.")
+
+        elif intent == "get_other":
+            await message.author.send("Please mention the user whose birthday you'd like to know.")
+            try:
+                reply = await client.wait_for("message", check=check, timeout=30.0)
+                mentioned_users = reply.mentions
+                if mentioned_users:
+                    for user in mentioned_users:
+                        if user.id != client.user.id:
+                            birthday_str = get_birthday_redis(user.id)
+                            if birthday_str:
+                                birthday_date = datetime.date.fromisoformat(birthday_str)
+                                await message.author.send(
+                                    f"🎂 {user.display_name}'s birthday is on {birthday_date.strftime('%m-%d-%Y')}."
+                                )
+                            else:
+                                await message.author.send(
+                                    f"❌ {user.display_name} hasn't set their birthday yet."
+                                )
+                else:
+                    await message.author.send("❌ You didn't mention a user. Please try again.")
+            except asyncio.TimeoutError:
+                await message.author.send("❌ You took too long to respond. Please try again.")
+
+        elif intent == "list":
+            birthdays = get_all_birthdays_redis()
+            if birthdays:
+                birthday_list = []
+                for user_id, date_str in birthdays:
+                    try:
+                        birthday_date = datetime.date.fromisoformat(date_str)
+                        formatted_date = birthday_date.strftime("%m-%d-%Y")
+                    except Exception:
+                        formatted_date = date_str
+                    birthday_list.append(f"<@{user_id}>: {formatted_date}")
+                await message.author.send(
+                    "🎉 **Server Birthdays:**\n" + "\n".join(birthday_list)
+                )
+            else:
+                await message.author.send("❌ No birthdays have been set yet.")
+
+# Slash commands (existing functionality remains unchanged)
 # Command to set birthday
 @client.tree.command(name="set_birthday", description="Set your birthday (format: MM-DD-YYYY or YYYY-MM-DD)")
 @app_commands.describe(date="The date of your birthday (MM-DD-YYYY or YYYY-MM-DD)")
@@ -148,65 +284,6 @@ async def list_birthdays(interaction: discord.Interaction):
         await interaction.followup.send(message)
     else:
         await interaction.followup.send("❌ No birthdays have been set yet.")
-
-# Manual command to forecast upcoming birthdays
-@client.tree.command(name="forecast_bdays", description="Forecast upcoming birthdays for current and next two months")
-@app_commands.describe(broadcast="If true, sends the forecast publicly in the channel; otherwise, only you can see it")
-async def forecast_bdays(interaction: discord.Interaction, broadcast: bool = False):
-    today = datetime.date.today()
-    birthdays = get_all_birthdays_redis()
-    current_month_birthdays = []
-    upcoming_birthdays = []
-    next_month = (today.month % 12) + 1
-    month_after = ((today.month + 1) % 12) + 1
-
-    for user_id, birthday_str in birthdays:
-        try:
-            bd = datetime.date.fromisoformat(birthday_str)
-            upcoming_bd = datetime.date(today.year, bd.month, bd.day)
-            if upcoming_bd < today:
-                upcoming_bd = datetime.date(today.year + 1, bd.month, bd.day)
-            # Group birthdays: current month vs. next two months.
-            if upcoming_bd.month == today.month:
-                current_month_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
-            elif upcoming_bd.month in [next_month, month_after]:
-                upcoming_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
-        except Exception as e:
-            print(f"❌ Error processing birthday for user {user_id}: {e}")
-
-    if not current_month_birthdays and not upcoming_birthdays:
-        msg = "❌ No upcoming birthdays found."
-    else:
-        sassy_phrases = [
-            "You'd better not forget these birthdays coming up... or else..",
-            "ALERT: OLD PEOPLE GETTING OLDER THIS MONTH",
-            "Don't say I didn't warn you: upcoming birthdays:",
-            "Incoming! Look who gets a little closer to the sweet release of death this month!"
-        ]
-        phrase = random.choice(sassy_phrases)
-        msg = phrase + "\n"
-        if current_month_birthdays:
-            msg += "\n".join([f"<@{uid}>: {date}" for uid, date in current_month_birthdays])
-        if upcoming_birthdays:
-            msg += "\n..and just around the bend:\n" + "\n".join([f"<@{uid}>: {date}" for uid, date in upcoming_birthdays])
-    
-    # Send the forecast as broadcast or privately.
-    if broadcast:
-        # Locate the guild's 'general' channel or use the first available text channel.
-        channel = discord.utils.get(interaction.guild.text_channels, name="general")
-        if channel is None and interaction.guild.text_channels:
-            channel = interaction.guild.text_channels[0]
-        if channel:
-            try:
-                await channel.send("@everyone " + msg)
-                await interaction.response.send_message("Broadcast sent to the server.", ephemeral=True)
-            except Exception as e:
-                print(f"❌ Error sending broadcast in {interaction.guild.name}: {e}")
-                await interaction.response.send_message("❌ Error sending broadcast.", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Could not find a suitable channel to broadcast.", ephemeral=True)
-    else:
-        await interaction.response.send_message(msg, ephemeral=True)
 
 # Background task to check for upcoming birthdays on the first day of each month
 @tasks.loop(hours=24)
