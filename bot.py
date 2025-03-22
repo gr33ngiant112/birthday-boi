@@ -116,12 +116,12 @@ async def on_message(message):
         if not intent:
             try:
                 await message.author.send(
-                    "🤔 I couldn't quite understand your request. Did you want to:\n"
+                    "🤔 Dawg, imma need you to be a little more clear:\n"
                     "1️⃣ Set a new birthday?\n"
                     "2️⃣ Get your birthday?\n"
                     "3️⃣ Get someone else's birthday?\n"
                     "4️⃣ List all birthdays?\n"
-                    "Please reply with the number of your choice (e.g., `1`, `2`, `3`, or `4`)."
+                    "Pick one homie (e.g., `1`, `2`, `3`, or `4`)."
                 )
 
                 def check(m):
@@ -138,15 +138,15 @@ async def on_message(message):
                 elif reply.content.strip() == "4":
                     intent = "list"
                 else:
-                    await message.author.send("❌ Invalid choice. Please try again.")
+                    await message.author.send("❌ Dafuq. (Please) try that shit again.")
                     return
             except asyncio.TimeoutError:
-                await message.author.send("❌ You took too long to respond. Please try again.")
+                await message.author.send("❌ Slow ass mf. (Please) try that shit again.")
                 return
 
         # Handle the inferred intent
         if intent == "set":
-            await message.author.send("Please provide your birthday in the format MM-DD-YYYY or Month Day, Year.")
+            await message.author.send("Format ya fuckin birthday like MM-DD-YYYY or Month Day, Year.")
             try:
                 reply = await client.wait_for("message", check=check, timeout=30.0)
                 birthday_date = None
@@ -162,12 +162,12 @@ async def on_message(message):
                 if birthday_date:
                     set_birthday_redis(message.author.id, birthday_date.isoformat())
                     await message.author.send(
-                        f"✅ Your birthday has been set to {birthday_date.strftime('%m-%d-%Y')}."
+                        f"✅ I set that shit to {birthday_date.strftime('%m-%d-%Y')}."
                     )
                 else:
-                    await message.author.send("❌ I couldn't understand the date. Please try again.")
+                    await message.author.send("❌ The fuck date is that?. (Please) try that shit again.")
             except asyncio.TimeoutError:
-                await message.author.send("❌ You took too long to respond. Please try again.")
+                await message.author.send("❌ Slow ass mf. (Please) try that again.")
 
         elif intent == "get":
             birthday_str = get_birthday_redis(message.author.id)
@@ -177,10 +177,10 @@ async def on_message(message):
                     f"🎂 Your birthday is on {birthday_date.strftime('%m-%d-%Y')}."
                 )
             else:
-                await message.author.send("❌ You haven't set your birthday yet.")
+                await message.author.send("❌ You ain't set shit yet.")
 
         elif intent == "get_other":
-            await message.author.send("Please mention the user whose birthday you'd like to know.")
+            await message.author.send("Who birfday you want.")
             try:
                 reply = await client.wait_for("message", check=check, timeout=30.0)
                 mentioned_users = reply.mentions
@@ -195,12 +195,12 @@ async def on_message(message):
                                 )
                             else:
                                 await message.author.send(
-                                    f"❌ {user.display_name} hasn't set their birthday yet."
+                                    f"❌ {user.display_name} aint set their shit yet."
                                 )
                 else:
-                    await message.author.send("❌ You didn't mention a user. Please try again.")
+                    await message.author.send("❌ You aint mention a mf. (Please) try that shit again.")
             except asyncio.TimeoutError:
-                await message.author.send("❌ You took too long to respond. Please try again.")
+                await message.author.send("❌ Slow ass mf. (Please) try that shit again.")
 
         elif intent == "list":
             birthdays = get_all_birthdays_redis()
@@ -217,7 +217,7 @@ async def on_message(message):
                     "🎉 **Server Birthdays:**\n" + "\n".join(birthday_list)
                 )
             else:
-                await message.author.send("❌ No birthdays have been set yet.")
+                await message.author.send("❌ Nobody aint set (they birthday) just shit yet.")
 
 # Slash commands (existing functionality remains unchanged)
 # Command to set birthday
@@ -244,8 +244,8 @@ async def set_birthday(interaction: discord.Interaction, date: str):
         )
 
 # Command to query birthday
-@client.tree.command(name="get_birthday", description="Get a user's birthday")
-@app_commands.describe(user="The user whose birthday you want to query")
+@client.tree.command(name="get_birthday", description="Get a mf birthday")
+@app_commands.describe(user="The user whose birthday you want to look up")
 async def get_birthday(interaction: discord.Interaction, user: discord.Member):
     # If the queried user is the bot itself, return the special message.
     if user.id == client.user.id:
@@ -263,10 +263,10 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
             formatted_date = birthday_str
         await interaction.response.send_message(f"🎂 {user.display_name}'s birthday is on {formatted_date}.")
     else:
-        await interaction.response.send_message(f"❌ {user.display_name} has not set their birthday yet.")
+        await interaction.response.send_message(f"❌ {user.display_name} has not set they shit yet.")
 
 # Command to list all birthdays
-@client.tree.command(name="list_birthdays", description="List all birthdays on the server")
+@client.tree.command(name="list_birthdays", description="List erryones birfday")
 async def list_birthdays(interaction: discord.Interaction):
     await interaction.response.defer()  # Prevent timeout while fetching data
     birthdays = get_all_birthdays_redis()  # Retrieve all birthdays from Redis
