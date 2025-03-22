@@ -171,10 +171,14 @@ async def on_message(message):
             try:
                 # Remove the mention of the bot and extract the date part
                 date_part = content.replace(f"@{client.user.name.lower()}", "").replace("my birthday is", "").replace("set my birthday to", "").strip()
+
+                # Ensure the extracted date part is clean
+                date_part = date_part.replace(",", "").replace("th", "").replace("st", "").replace("nd", "").replace("rd", "")
+
                 birthday_date = None
 
                 # Try parsing the date in various formats
-                for fmt in ["%m%d%Y", "%m-%d-%Y", "%m/%d/%Y", "%Y%m%d", "%B %d, %Y", "%B %d %Y"]:
+                for fmt in ["%m%d%Y", "%m-%d-%Y", "%m/%d/%Y", "%Y%m%d", "%B %d %Y", "%B %d, %Y"]:
                     try:
                         birthday_date = datetime.datetime.strptime(date_part, fmt).date()
                         break
