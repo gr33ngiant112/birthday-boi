@@ -6,13 +6,7 @@ from discord import app_commands
 import discord
 from dotenv import load_dotenv
 import datetime
-import random
 import asyncio
-import spacy  # Add spaCy for natural language processing
-import en_core_web_sm
-
-# Load spaCy's English language model
-nlp = en_core_web_sm.load()
 
 # If running on Heroku, DYNO will be set; otherwise load .env for local testing.
 if os.getenv("DYNO"):
@@ -80,48 +74,47 @@ async def check_upcoming_birthdays():
         return
 
     birthdays = get_all_birthdays_redis()
-    current_month_birthdays = []
     upcoming_birthdays = []
     next_month = (today.month % 12) + 1
     month_after = ((today.month + 1) % 12) + 1
 
     for user_id, birthday_str in birthdays:
         try:
-            # Parse the stored birthday; ignore stored year and compute next occurrence.
             bd = datetime.date.fromisoformat(birthday_str)
             upcoming_bd = datetime.date(today.year, bd.month, bd.day)
             if upcoming_bd < today:
                 upcoming_bd = datetime.date(today.year + 1, bd.month, bd.day)
-            # Group birthdays: current month vs. next two months.
-            if upcoming_bd.month == today.month:
-                current_month_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
-            elif upcoming_bd.month in [next_month, month_after]:
-                upcoming_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
+            if upcoming_bd.month in [today.month, next_month, month_after]:
+                # Calculate age on the next birthday
+                age = upcoming_bd.year - bd.year
+                upcoming_birthdays.append((user_id, upcoming_bd, age))
         except Exception as e:
             print(f"❌ Error processing birthday for user {user_id}: {e}")
 
-    if current_month_birthdays or upcoming_birthdays:
-        sassy_phrases = [
-            "You'd better not forget these birthdays coming up... or else..",
-            "ALERT: OLD PEOPLE GETTING OLDER THIS MONTH",
-            "Don't say I didn't warn you: upcoming birthdays:",
-            "Incoming! Look who gets a little closer to the sweet release of death this month!"
-        ]
-        phrase = random.choice(sassy_phrases)
-        message = phrase + "\n"
-        if current_month_birthdays:
-            message += "\n".join([f"<@{uid}>: {date}" for uid, date in current_month_birthdays])
-        if upcoming_birthdays:
-            message += "\n..and just around the bend:\n" + "\n".join([f"<@{uid}>: {date}" for uid, date in upcoming_birthdays])
+    if upcoming_birthdays:
+        # Prepare the table header
+        table_header = f"{'Who'.ljust(25)}{'Turning'.ljust(10)}{'When'.ljust(25)}\n"
+        table_header += "-" * 60 + "\n"
 
-        # Send the message to each guild's 'general' or first available text channel with an @everyone ping.
+        # Prepare the table rows
+        table_rows = []
+        for user_id, upcoming_bd, age in upcoming_birthdays:
+            user = discord.utils.get(client.get_all_members(), id=int(user_id))
+            if user:
+                who = f"@{user.display_name}".ljust(25)
+                turning = f"{age}".ljust(10)
+                when = upcoming_bd.strftime("%A, %B %d %Y (%m-%d-%Y)").ljust(25)
+                table_rows.append(f"{who}{turning}{when}")
+
+        # Combine the header and rows
+        table = table_header + "\n".join(table_rows)
+
+        # Send the table as a message
         for guild in client.guilds:
             channel = discord.utils.get(guild.text_channels, name="general")
-            if channel is None and guild.text_channels:
-                channel = guild.text_channels[0]
             if channel:
                 try:
-                    await channel.send("@everyone " + message)
+                    await channel.send(f"🎉 **Upcoming Birthdays:**\n```\n{table}\n```")
                 except Exception as e:
                     print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
 
@@ -133,6 +126,7 @@ class MyClient(discord.Client):
 
     async def setup_hook(self):
         await self.tree.sync()
+        print("✅ Slash commands synced globally.")
         # Start the upcoming birthdays task after commands are synced.
         check_upcoming_birthdays.start()
 
@@ -151,56 +145,26 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    # Debugging functionality for a specific user
-    if message.author.name == "yaboy" and "debug" in message.content.lower():
-        if "what is my birthday" in message.content.lower():
-            # Log debugging information
-            print(f"DEBUG: Received debug command from {message.author.name}")
-            birthday_str = get_birthday_redis(message.author.id)
-            if birthday_str:
-                birthday_date = datetime.date.fromisoformat(birthday_str)
-                debug_response = f"DEBUG: Your birthday is stored as {birthday_date.strftime('%m-%d-%Y')}."
-            else:
-                debug_response = "DEBUG: No birthday is set for this user."
-            print(debug_response)
-            await message.reply(debug_response, mention_author=True)
-            return  # Exit early to avoid processing the message further
-
     # Check if the bot is mentioned
     if client.user.mentioned_in(message):
         content = message.content.lower()
-        doc = nlp(content)
 
-        # Expanded intent detection
+        # Infer intent using expanded keyword matching
         intent = None
-
-        # Intent: Get
-        get_phrases = [
+        if any(phrase in content for phrase in [
             "what is my", "when is my", "when my", "what my", "my birthday",
             "when is my fucking birthday", "when do i get older", "next birthday"
-        ]
-        if any(phrase in content for phrase in get_phrases):
+        ]):
             intent = "get"
-
-        # Intent: Set
-        set_phrases = [
+        elif any(phrase in content for phrase in [
             "my birthday is", "my bday is", "set my birthday", "set my birthday to", "update my birthday"
-        ]
-        if any(phrase in content for phrase in set_phrases):
+        ]):
             intent = "set"
-
-        # Intent: Get Other
-        if message.mentions:
-            get_other_phrases = [
-                "what is", "when is", "next birthday", "birthday", "bday"
-            ]
-            if any(phrase in content for phrase in get_other_phrases):
-                intent = "get_other"
-
-        # Intent: List
-        list_phrases = ["list birthdays", "show birthdays", "when is @everyone's birthday", "what bdays are coming up"]
-        if any(phrase in content for phrase in list_phrases):
-            intent = "list"
+        elif any(phrase in content for phrase in [
+            "what is", "when is", "next birthday", "birthday", "bday",
+            "when is @everyone's birthday", "what birthdates are coming up", "what bdays are coming up"
+        ]):
+            intent = "get_other"
 
         # Handle the inferred intent
         if intent == "set":
@@ -212,15 +176,13 @@ async def on_message(message):
                     timeout=30.0
                 )
                 birthday_date = None
-                for ent in nlp(reply.content).ents:
-                    if ent.label_ == "DATE":
-                        try:
-                            birthday_date = datetime.datetime.strptime(ent.text, "%B %d %Y").date()
-                        except ValueError:
-                            try:
-                                birthday_date = datetime.datetime.strptime(ent.text, "%m-%d-%Y").date()
-                            except ValueError:
-                                pass
+                try:
+                    birthday_date = datetime.datetime.strptime(reply.content, "%m-%d-%Y").date()
+                except ValueError:
+                    try:
+                        birthday_date = datetime.datetime.strptime(reply.content, "%Y-%m-%d").date()
+                    except ValueError:
+                        pass
                 if birthday_date:
                     set_birthday_redis(message.author.id, birthday_date.isoformat())
                     await message.reply(
@@ -240,7 +202,6 @@ async def on_message(message):
             else:
                 response = "❌ You haven't set your birthday yet."
             await message.reply(response, mention_author=True)
-            await ask_to_broadcast(message, response)
 
         elif intent == "get_other":
             mentioned_users = message.mentions
@@ -254,48 +215,137 @@ async def on_message(message):
                         else:
                             response = f"❌ {user.display_name} hasn't set their birthday yet."
                         await message.reply(response, mention_author=True)
-                        await ask_to_broadcast(message, response)
             else:
                 await message.reply("❌ You didn't mention anyone. Please try again.", mention_author=True)
 
-        elif intent == "list":
-            birthdays = get_all_birthdays_redis()
-            if birthdays:
-                birthday_list = "\n".join([f"<@{user_id}>: {date}" for user_id, date in birthdays])
-                response = f"🎉 **Server Birthdays:**\n{birthday_list}"
-            else:
-                response = "❌ No birthdays have been set yet."
-            await message.reply(response, mention_author=True)
-            await ask_to_broadcast(message, response)
-
-        else:
-            await message.reply("❌ I couldn't understand your request. Please try again.", mention_author=True)
-
-
-async def ask_to_broadcast(message, response):
-    """Ask the user if they want to broadcast the response to the general channel."""
-    await message.reply(
-        "Do you want me to broadcast this to the general channel? (y/n)",
-        mention_author=True
-    )
+# Slash command to set a birthday
+@client.tree.command(name="set_birthday", description="Set your birthday (format: MM-DD-YYYY or YYYY-MM-DD)")
+@app_commands.describe(date="The date of your birthday (MM-DD-YYYY or YYYY-MM-DD)")
+async def set_birthday(interaction: discord.Interaction, date: str):
+    await interaction.response.defer(ephemeral=True)  # Prevent Discord timeout
+    user_id = interaction.user.id
     try:
-        reply = await client.wait_for(
-            "message",
-            check=lambda m: m.author == message.author and m.channel == message.channel,
-            timeout=30.0
+        # Try MM-DD-YYYY first, then fallback to YYYY-MM-DD
+        try:
+            birthday_date = datetime.datetime.strptime(date, "%m-%d-%Y").date()
+        except ValueError:
+            birthday_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
+        # Store in Redis in ISO format (YYYY-MM-DD)
+        set_birthday_redis(user_id, birthday_date.isoformat())
+        # Respond with birthday formatted as MM-DD-YYYY
+        await interaction.followup.send(
+            f"✅ Your birthday has been set to {birthday_date.strftime('%m-%d-%Y')}.", ephemeral=True
         )
-        if reply.content.lower() in ["y", "yes"]:
-            general_channel = discord.utils.get(message.guild.text_channels, name="general")
-            if general_channel:
-                await general_channel.send(response)
-            else:
-                await message.reply("❌ Couldn't find a general channel to broadcast to.", mention_author=True)
-        elif reply.content.lower() in ["n", "no"]:
-            await message.reply("Alright, I won't broadcast it.", mention_author=True)
-        else:
-            await message.reply("❌ Invalid response. Please try again.", mention_author=True)
-    except asyncio.TimeoutError:
-        await message.reply("❌ You took too long to respond. No broadcast will be made.", mention_author=True)
+    except ValueError:
+        await interaction.followup.send(
+            "❌ Invalid date format! Use MM-DD-YYYY or YYYY-MM-DD.", ephemeral=True
+        )
+
+# Command to query birthday
+@client.tree.command(name="get_birthday", description="Get a user's birthday")
+@app_commands.describe(user="The user whose birthday you want to look up")
+async def get_birthday(interaction: discord.Interaction, user: discord.Member):
+    user_id = user.id
+    birthday_str = get_birthday_redis(user_id)
+    if birthday_str:
+        try:
+            # Parse the stored birthday
+            birthdate = datetime.date.fromisoformat(birthday_str)
+            # Compute the next birthday for the current year
+            today = datetime.date.today()
+            next_birthday = datetime.date(today.year, birthdate.month, birthdate.day)
+            if next_birthday < today:
+                next_birthday = datetime.date(today.year + 1, birthdate.month, birthdate.day)
+
+            # Format the table
+            table = f"{'Birthdate'.ljust(15)}{'Birthday'.ljust(25)}\n"
+            table += "-" * 40 + "\n"
+            table += f"{birthdate.strftime('%m-%d-%Y').ljust(15)}{next_birthday.strftime('%A, %B %d %Y').ljust(25)}"
+
+            await interaction.response.send_message(f"🎂 **{user.display_name}'s Birthday:**\n```\n{table}\n```")
+        except Exception as e:
+            print(f"❌ Error processing birthday for user {user_id}: {e}")
+            await interaction.response.send_message("❌ An error occurred while retrieving the birthday.")
+    else:
+        await interaction.response.send_message(f"❌ {user.display_name} has not set their birthday yet.")
+
+# Command to list all birthdays
+@client.tree.command(name="list_birthdays", description="List all birthdays in the server")
+async def list_birthdays(interaction: discord.Interaction):
+    await interaction.response.defer()  # Prevent timeout while fetching data
+    birthdays = get_all_birthdays_redis()
+    if birthdays:
+        # Prepare the table header
+        table = f"{'User'.ljust(25)}{'Birthdate'.ljust(15)}{'Birthday'.ljust(25)}\n"
+        table += "-" * 65 + "\n"
+
+        # Prepare the table rows
+        today = datetime.date.today()
+        for user_id, birthday_str in birthdays:
+            try:
+                # Parse the stored birthday
+                birthdate = datetime.date.fromisoformat(birthday_str)
+                # Compute the next birthday for the current year
+                next_birthday = datetime.date(today.year, birthdate.month, birthdate.day)
+                if next_birthday < today:
+                    next_birthday = datetime.date(today.year + 1, birthdate.month, birthdate.day)
+
+                # Get the user's display name
+                user = interaction.guild.get_member(int(user_id))
+                if user:
+                    table += f"{user.display_name.ljust(25)}{birthdate.strftime('%m-%d-%Y').ljust(15)}{next_birthday.strftime('%A, %B %d %Y').ljust(25)}\n"
+            except Exception as e:
+                print(f"❌ Error processing birthday for user {user_id}: {e}")
+
+        await interaction.followup.send(f"🎉 **Server Birthdays:**\n```\n{table}\n```")
+    else:
+        await interaction.followup.send("❌ No birthdays have been set yet.")
+
+# Command to forecast upcoming birthdays
+@client.tree.command(name="forecast_birthdays", description="Show upcoming birthdays in the next 60 and 90 days")
+async def forecast_birthdays(interaction: discord.Interaction):
+    await interaction.response.defer()  # Prevent timeout while fetching data
+    today = datetime.date.today()
+    birthdays = get_all_birthdays_redis()
+    upcoming_birthdays = []
+    next_month = (today.month % 12) + 1
+    month_after = ((today.month + 1) % 12) + 1
+
+    for user_id, birthday_str in birthdays:
+        try:
+            bd = datetime.date.fromisoformat(birthday_str)
+            upcoming_bd = datetime.date(today.year, bd.month, bd.day)
+            if upcoming_bd < today:
+                upcoming_bd = datetime.date(today.year + 1, bd.month, bd.day)
+            if upcoming_bd.month in [next_month, month_after]:
+                # Calculate age on the next birthday
+                age = upcoming_bd.year - bd.year
+                upcoming_birthdays.append((user_id, upcoming_bd, age))
+        except Exception as e:
+            print(f"❌ Error processing birthday for user {user_id}: {e}")
+
+    if upcoming_birthdays:
+        # Prepare the table header
+        table_header = f"{'Who'.ljust(25)}{'When'.ljust(25)}{'Turning'.ljust(10)}\n"
+        table_header += "-" * 60 + "\n"
+
+        # Prepare the table rows
+        table_rows = []
+        for user_id, upcoming_bd, age in upcoming_birthdays:
+            user = interaction.guild.get_member(int(user_id))
+            if user:
+                who = f"@{user.display_name}".ljust(25)
+                when = upcoming_bd.strftime("%A, %B %d").ljust(25)
+                turning = f"{age}".ljust(10)
+                table_rows.append(f"{who}{when}{turning}")
+
+        # Combine the header and rows
+        table = table_header + "\n".join(table_rows)
+
+        # Send the table as a message
+        await interaction.followup.send(f"🎉 **Upcoming Birthdays:**\n```\n{table}\n```")
+    else:
+        await interaction.followup.send("❌ No upcoming birthdays in the next 60 or 90 days.")
 
 # Run the bot
 client.run(TOKEN)
