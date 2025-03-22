@@ -168,31 +168,35 @@ async def on_message(message):
 
         # Handle the inferred intent
         if intent == "set":
-            await message.reply("Please provide your birthday in MM-DD-YYYY format.", mention_author=True)
+            # Extract the date from the message content
             try:
-                reply = await client.wait_for(
-                    "message",
-                    check=lambda m: m.author == message.author and m.channel == message.channel,
-                    timeout=30.0
-                )
+                # Remove the mention of the bot and extract the date part
+                date_part = content.replace(f"@{client.user.name.lower()}", "").replace("my birthday is", "").strip()
                 birthday_date = None
-                try:
-                    birthday_date = datetime.datetime.strptime(reply.content, "%m-%d-%Y").date()
-                except ValueError:
+
+                # Try parsing the date in various formats
+                for fmt in ["%m%d%Y", "%m-%d-%Y", "%m/%d/%Y", "%Y%m%d", "%B %d, %Y", "%B %d %Y"]:
                     try:
-                        birthday_date = datetime.datetime.strptime(reply.content, "%Y-%m-%d").date()
+                        birthday_date = datetime.datetime.strptime(date_part, fmt).date()
+                        break
                     except ValueError:
-                        pass
+                        continue
+
                 if birthday_date:
+                    # Store the birthday in Redis
                     set_birthday_redis(message.author.id, birthday_date.isoformat())
                     await message.reply(
                         f"✅ Your birthday has been set to {birthday_date.strftime('%m-%d-%Y')}.",
                         mention_author=True
                     )
                 else:
-                    await message.reply("❌ I couldn't understand that date. Please try again.", mention_author=True)
-            except asyncio.TimeoutError:
-                await message.reply("❌ You took too long to respond. Please try again.", mention_author=True)
+                    await message.reply(
+                        "❌ I couldn't understand the date format. Please try again with a valid date.",
+                        mention_author=True
+                    )
+            except Exception as e:
+                print(f"❌ Error processing birthday: {e}")
+                await message.reply("❌ An error occurred while setting your birthday. Please try again.", mention_author=True)
 
         elif intent == "get":
             birthday_str = get_birthday_redis(message.author.id)
