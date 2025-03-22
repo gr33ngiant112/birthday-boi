@@ -71,6 +71,60 @@ def get_all_birthdays_redis():
         print(f"❌ Error retrieving keys: {e}")
     return birthdays
 
+# Background task to check for upcoming birthdays on the first day of each month
+@tasks.loop(hours=24)
+async def check_upcoming_birthdays():
+    today = datetime.date.today()
+    # Only run on the first day of the month.
+    if today.day != 1:
+        return
+
+    birthdays = get_all_birthdays_redis()
+    current_month_birthdays = []
+    upcoming_birthdays = []
+    next_month = (today.month % 12) + 1
+    month_after = ((today.month + 1) % 12) + 1
+
+    for user_id, birthday_str in birthdays:
+        try:
+            # Parse the stored birthday; ignore stored year and compute next occurrence.
+            bd = datetime.date.fromisoformat(birthday_str)
+            upcoming_bd = datetime.date(today.year, bd.month, bd.day)
+            if upcoming_bd < today:
+                upcoming_bd = datetime.date(today.year + 1, bd.month, bd.day)
+            # Group birthdays: current month vs. next two months.
+            if upcoming_bd.month == today.month:
+                current_month_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
+            elif upcoming_bd.month in [next_month, month_after]:
+                upcoming_birthdays.append((user_id, upcoming_bd.strftime("%m-%d-%Y")))
+        except Exception as e:
+            print(f"❌ Error processing birthday for user {user_id}: {e}")
+
+    if current_month_birthdays or upcoming_birthdays:
+        sassy_phrases = [
+            "You'd better not forget these birthdays coming up... or else..",
+            "ALERT: OLD PEOPLE GETTING OLDER THIS MONTH",
+            "Don't say I didn't warn you: upcoming birthdays:",
+            "Incoming! Look who gets a little closer to the sweet release of death this month!"
+        ]
+        phrase = random.choice(sassy_phrases)
+        message = phrase + "\n"
+        if current_month_birthdays:
+            message += "\n".join([f"<@{uid}>: {date}" for uid, date in current_month_birthdays])
+        if upcoming_birthdays:
+            message += "\n..and just around the bend:\n" + "\n".join([f"<@{uid}>: {date}" for uid, date in upcoming_birthdays])
+
+        # Send the message to each guild's 'general' or first available text channel with an @everyone ping.
+        for guild in client.guilds:
+            channel = discord.utils.get(guild.text_channels, name="general")
+            if channel is None and guild.text_channels:
+                channel = guild.text_channels[0]
+            if channel:
+                try:
+                    await channel.send("@everyone " + message)
+                except Exception as e:
+                    print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
+
 # Subclassing Client to use app commands (slash commands)
 class MyClient(discord.Client):
     def __init__(self):
