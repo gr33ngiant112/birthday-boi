@@ -7,6 +7,10 @@ import discord
 from dotenv import load_dotenv
 import datetime
 import asyncio
+import spacy  # Added spaCy for enhanced message extraction
+
+# Load spaCy's English model
+nlp = spacy.load("en_core_web_sm")
 
 # If running on Heroku, DYNO will be set; otherwise load .env for local testing.
 if os.getenv("DYNO"):
@@ -148,6 +152,16 @@ async def on_message(message):
     if client.user.mentioned_in(message):
         content = message.content.lower()
 
+        # Use spaCy to process the message
+        doc = nlp(content)
+
+        # Extract potential date entities using spaCy
+        extracted_date = None
+        for ent in doc.ents:
+            if ent.label_ == "DATE":
+                extracted_date = ent.text
+                break
+
         # Infer intent using expanded keyword matching
         intent = None
         if any(phrase in content for phrase in [
@@ -167,39 +181,34 @@ async def on_message(message):
 
         # Handle the inferred intent
         if intent == "set":
-            # Extract the date from the message content
-            try:
-                # Remove the mention of the bot and extract the date part
-                date_part = content.replace(f"@{client.user.name.lower()}", "").replace("my birthday is", "").replace("set my birthday to", "").strip()
+            # Use the extracted date if available
+            date_part = extracted_date if extracted_date else content.replace(f"@{client.user.name.lower()}", "").replace("my birthday is", "").replace("set my birthday to", "").strip()
 
-                # Ensure the extracted date part is clean
-                date_part = date_part.replace(",", "").replace("th", "").replace("st", "").replace("nd", "").replace("rd", "")
+            # Ensure the extracted date part is clean
+            date_part = date_part.replace(",", "").replace("th", "").replace("st", "").replace("nd", "").replace("rd", "")
 
-                birthday_date = None
+            birthday_date = None
 
-                # Try parsing the date in various formats
-                for fmt in ["%m%d%Y", "%m-%d-%Y", "%m/%d/%Y", "%Y%m%d", "%B %d %Y", "%B %d, %Y"]:
-                    try:
-                        birthday_date = datetime.datetime.strptime(date_part, fmt).date()
-                        break
-                    except ValueError:
-                        continue
+            # Try parsing the date in various formats
+            for fmt in ["%m%d%Y", "%m-%d-%Y", "%m/%d/%Y", "%Y%m%d", "%B %d %Y", "%B %d, %Y"]:
+                try:
+                    birthday_date = datetime.datetime.strptime(date_part, fmt).date()
+                    break
+                except ValueError:
+                    continue
 
-                if birthday_date:
-                    # Store the birthday in Redis
-                    set_birthday_redis(message.author.id, birthday_date.isoformat())
-                    await message.reply(
-                        f"✅ Your birthday has been updated to {birthday_date.strftime('%m-%d-%Y')}.",
-                        mention_author=True
-                    )
-                else:
-                    await message.reply(
-                        "❌ I couldn't understand the date format. Please try again with a valid date.",
-                        mention_author=True
-                    )
-            except Exception as e:
-                print(f"❌ Error processing birthday: {e}")
-                await message.reply("❌ An error occurred while setting your birthday. Please try again.", mention_author=True)
+            if birthday_date:
+                # Store the birthday in Redis
+                set_birthday_redis(message.author.id, birthday_date.isoformat())
+                await message.reply(
+                    f"✅ Your birthday has been updated to {birthday_date.strftime('%m-%d-%Y')}.",
+                    mention_author=True
+                )
+            else:
+                await message.reply(
+                    "❌ I couldn't understand the date format. Please try again with a valid date.",
+                    mention_author=True
+                )
 
         elif intent == "get":
             birthday_str = get_birthday_redis(message.author.id)
