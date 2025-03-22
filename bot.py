@@ -266,17 +266,17 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
             table += "-" * 40 + "\n"
             table += f"{birthdate.strftime('%m-%d-%Y').ljust(15)}{next_birthday.strftime('%A, %B %d %Y').ljust(25)}"
 
-            await interaction.response.send_message(f"🎂 **{user.display_name}'s Birthday:**\n```\n{table}\n```")
+            await interaction.response.send_message(f"🎂 **{user.display_name}'s Birthday:**\n```\n{table}\n```", ephemeral=True)
         except Exception as e:
             print(f"❌ Error processing birthday for user {user_id}: {e}")
-            await interaction.response.send_message("❌ An error occurred while retrieving the birthday.")
+            await interaction.response.send_message("❌ An error occurred while retrieving the birthday.", ephemeral=True)
     else:
-        await interaction.response.send_message(f"❌ {user.display_name} has not set their birthday yet.")
+        await interaction.response.send_message(f"❌ {user.display_name} has not set their birthday yet.", ephemeral=True)
 
 # Command to list all birthdays
 @client.tree.command(name="list_birthdays", description="List all birthdays in the server")
 async def list_birthdays(interaction: discord.Interaction):
-    await interaction.response.defer()  # Prevent timeout while fetching data
+    await interaction.response.defer(ephemeral=True)  # Prevent timeout while fetching data
     birthdays = get_all_birthdays_redis()
     if birthdays:
         # Prepare the table header
@@ -301,9 +301,9 @@ async def list_birthdays(interaction: discord.Interaction):
             except Exception as e:
                 print(f"❌ Error processing birthday for user {user_id}: {e}")
 
-        await interaction.followup.send(f"🎉 **Server Birthdays:**\n```\n{table}\n```")
+        await interaction.followup.send(f"🎉 **Server Birthdays:**\n```\n{table}\n```", ephemeral=True)
     else:
-        await interaction.followup.send("❌ No birthdays have been set yet.")
+        await interaction.followup.send("❌ No birthdays have been set yet.", ephemeral=True)
 
 # Command to forecast upcoming birthdays
 @client.tree.command(name="forecast_birthdays", description="Show upcoming birthdays in the next 60 and 90 days")
