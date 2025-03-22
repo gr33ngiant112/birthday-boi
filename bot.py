@@ -151,14 +151,14 @@ async def on_message(message):
         # Infer intent using expanded keyword matching
         intent = None
         if any(phrase in content for phrase in [
+            "my birthday is", "my bday is", "set my birthday", "set my birthday to", "update my birthday"
+        ]):
+            intent = "set"
+        elif any(phrase in content for phrase in [
             "what is my", "when is my", "when my", "what my", "my birthday",
             "when is my fucking birthday", "when do i get older", "next birthday"
         ]):
             intent = "get"
-        elif any(phrase in content for phrase in [
-            "my birthday is", "my bday is", "set my birthday", "set my birthday to", "update my birthday"
-        ]):
-            intent = "set"
         elif any(phrase in content for phrase in [
             "what is", "when is", "next birthday", "birthday", "bday",
             "when is @everyone's birthday", "what birthdates are coming up", "what bdays are coming up"
@@ -205,21 +205,6 @@ async def on_message(message):
             else:
                 response = "❌ You haven't set your birthday yet."
             await message.reply(response, mention_author=True)
-
-        elif intent == "get_other":
-            mentioned_users = message.mentions
-            if mentioned_users:
-                for user in mentioned_users:
-                    if user.id != client.user.id:
-                        birthday_str = get_birthday_redis(user.id)
-                        if birthday_str:
-                            birthday_date = datetime.date.fromisoformat(birthday_str)
-                            response = f"🎂 {user.display_name}'s birthday is on {birthday_date.strftime('%m-%d-%Y')}."
-                        else:
-                            response = f"❌ {user.display_name} hasn't set their birthday yet."
-                        await message.reply(response, mention_author=True)
-            else:
-                await message.reply("❌ You didn't mention anyone. Please try again.", mention_author=True)
 
         elif intent == "get_other":
             mentioned_users = message.mentions
