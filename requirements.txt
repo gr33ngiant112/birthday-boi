@@ -1,5 +1,9 @@
 discord.py
 python-dotenv
 redis
-spacy
+wheel
+setuptools>=65.5.1  # Use a more recent version of setuptools
+cython==0.29.37     # Pin the latest compatible version of Cython
+spacy==3.5.4
+thinc==8.1.12       # Update thinc to a version compatible with spaCy 3.5.4
 https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.5.0/en_core_web_sm-3.5.0.tar.gz
