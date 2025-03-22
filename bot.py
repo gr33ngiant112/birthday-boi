@@ -138,7 +138,6 @@ client = MyClient()
 async def on_ready():
     print(f'✅ Logged in as {client.user}')
 
-# Natural conversation handler
 @client.event
 async def on_message(message):
     # Ignore messages from the bot itself
@@ -171,7 +170,7 @@ async def on_message(message):
             # Extract the date from the message content
             try:
                 # Remove the mention of the bot and extract the date part
-                date_part = content.replace(f"@{client.user.name.lower()}", "").replace("my birthday is", "").strip()
+                date_part = content.replace(f"@{client.user.name.lower()}", "").replace("my birthday is", "").replace("set my birthday to", "").strip()
                 birthday_date = None
 
                 # Try parsing the date in various formats
@@ -186,7 +185,7 @@ async def on_message(message):
                     # Store the birthday in Redis
                     set_birthday_redis(message.author.id, birthday_date.isoformat())
                     await message.reply(
-                        f"✅ Your birthday has been set to {birthday_date.strftime('%m-%d-%Y')}.",
+                        f"✅ Your birthday has been updated to {birthday_date.strftime('%m-%d-%Y')}.",
                         mention_author=True
                     )
                 else:
@@ -206,6 +205,21 @@ async def on_message(message):
             else:
                 response = "❌ You haven't set your birthday yet."
             await message.reply(response, mention_author=True)
+
+        elif intent == "get_other":
+            mentioned_users = message.mentions
+            if mentioned_users:
+                for user in mentioned_users:
+                    if user.id != client.user.id:
+                        birthday_str = get_birthday_redis(user.id)
+                        if birthday_str:
+                            birthday_date = datetime.date.fromisoformat(birthday_str)
+                            response = f"🎂 {user.display_name}'s birthday is on {birthday_date.strftime('%m-%d-%Y')}."
+                        else:
+                            response = f"❌ {user.display_name} hasn't set their birthday yet."
+                        await message.reply(response, mention_author=True)
+            else:
+                await message.reply("❌ You didn't mention anyone. Please try again.", mention_author=True)
 
         elif intent == "get_other":
             mentioned_users = message.mentions
