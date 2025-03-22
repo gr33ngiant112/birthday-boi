@@ -151,6 +151,21 @@ async def on_message(message):
     if message.author == client.user:
         return
 
+    # Debugging functionality for a specific user
+    if message.author.name == "yaboy" and "debug" in message.content.lower():
+        if "what is my birthday" in message.content.lower():
+            # Log debugging information
+            print(f"DEBUG: Received debug command from {message.author.name}")
+            birthday_str = get_birthday_redis(message.author.id)
+            if birthday_str:
+                birthday_date = datetime.date.fromisoformat(birthday_str)
+                debug_response = f"DEBUG: Your birthday is stored as {birthday_date.strftime('%m-%d-%Y')}."
+            else:
+                debug_response = "DEBUG: No birthday is set for this user."
+            print(debug_response)
+            await message.reply(debug_response, mention_author=True)
+            return  # Exit early to avoid processing the message further
+
     # Check if the bot is mentioned
     if client.user.mentioned_in(message):
         content = message.content.lower()
