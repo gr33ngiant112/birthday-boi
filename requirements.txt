@@ -4,4 +4,5 @@ redis
 spacy==3.5.0
 thinc==8.1.7
 numpy==1.23.5
+setuptools<82  # spaCy 3.5 imports pkg_resources, which setuptools 82 removed
 https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.5.0/en_core_web_sm-3.5.0.tar.gz
