@@ -39,6 +39,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # gitleaks-action lists a PR's commits with one unpaginated API call, so it scans at most 30.
+      - name: Check the PR has at most 30 commits
+        if: github.event_name == 'pull_request'
+        env:
+          PR_COMMITS: ${{ github.event.pull_request.commits }}
+        run: |
+          if [ "$PR_COMMITS" -gt 30 ]; then
+            echo "::error::This PR has $PR_COMMITS commits, but gitleaks-action scans only the first 30. Squash or split it to 30 commits or fewer."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -75,6 +85,8 @@ jobs:
         with:
           # --no-resolve: the freeze is already the full set; resolving again adds packages
           # that pip skipped on Python 3.11 because of environment markers.
+          # --no-ignore: osv-scanner 2.6.0 skips files that match a .gitignore pattern, even when named.
           scan-args: |-
             --lockfile=requirements.txt:pip-freeze.txt
             --no-resolve
+            --no-ignore
