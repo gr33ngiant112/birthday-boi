@@ -110,11 +110,11 @@ def test_setting_a_birthday_adds_the_guild_to_the_members_guilds(fake_redis, gat
     )
     asyncio.run(bot.on_message(message))
 
-    set_in_b = [payload.get("content") for payload in gateway.sent_to(gateway.general(guild_b))]
-    if text_of(set_in_a) != "✅ Your birthday has been set to 12-25-1990." or set_in_b != [
-        "✅ Your birthday has been updated to 12-25-1990."
-    ]:
-        pytest.fail(f"setup: both paths should set the birthday, got {set_in_a.sent!r} and {set_in_b!r}")
+    chat_replies = [payload.get("content") for payload in gateway.sent_to(gateway.general(guild_b))]
+    if text_of(set_in_a) != "✅ Your birthday has been set to 12-25-1990.":
+        pytest.fail(f"setup: /set_birthday should set the birthday, got {set_in_a.sent!r}")
+    if chat_replies != ["✅ Your birthday has been updated to 12-25-1990."]:
+        pytest.fail(f"setup: the chat path should set the birthday, got {chat_replies!r}")
     assert fake_redis.smembers(guilds_of(SETTER)) == {str(GUILD_A), str(GUILD_B)}
     # The other tests seed with FakeStore.seed_birthday, which must write exactly this.
     written = fake_redis.contents()
