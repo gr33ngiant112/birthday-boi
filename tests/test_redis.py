@@ -1,7 +1,7 @@
 """#20: create_redis_client() with a plain redis:// URL (local runs, CI service containers)."""
 
 import pytest
-import redis
+import redis.asyncio
 
 import bot
 
@@ -18,6 +18,6 @@ def test_plain_redis_url_builds_a_connection(monkeypatch):
     # Builds the connection object only; nothing connects.
     connection = client.connection_pool.make_connection()
 
-    assert isinstance(connection, redis.connection.Connection)
-    assert not isinstance(connection, redis.connection.SSLConnection)
+    assert isinstance(connection, redis.asyncio.connection.Connection)
+    assert not isinstance(connection, redis.asyncio.connection.SSLConnection)
     assert (connection.host, connection.port, connection.db) == ("localhost", 6379, 0)

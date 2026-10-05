@@ -1,14 +1,16 @@
 """Shared fixtures for the bot.py tests. Nothing here opens a network connection.
 
-- fake_redis: an empty fakeredis client in place of bot.redis_client, which main()
-  creates in production.
+- fake_redis: bot.redis_client becomes an empty fakeredis.FakeAsyncRedis, in place of
+  the redis.asyncio client main() creates in production. The fixture returns a
+  synchronous FakeStore on the same fake server, for seeding and checks.
 - freeze_today: fixes the date bot.py gets from datetime.date.today().
 - gateway: real discord.py guilds, channels, members and messages, built from
   gateway-shaped payloads on the bot client's own ConnectionState. Channel messages
   are captured at HTTPClient.send_message, after discord.py has built the final
   request payload (including the effective allowed_mentions) and before any HTTP.
   gateway.interaction() returns a FakeInteraction for slash commands, whose
-  responses would go through Discord's webhook endpoints instead.
+  responses would go through Discord's webhook endpoints instead; it records the
+  payload discord.py would build for each.
 """
 
 import copy
@@ -33,11 +35,24 @@ BOT_NAME = "Birthday Boi"
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 
 
+class FakeStore(fakeredis.FakeRedis):
+    """A synchronous client on the fake server behind bot.redis_client, for seeding and checks."""
+
+    def seed_birthday(self, guild_id, user_id, birthday):
+        """Store birthday (an ISO date) as /set_birthday run in that guild does.
+
+        That is the user's date, and the user's id in the guild's set: each guild's
+        views list only the members in its own set.
+        """
+        self.set(f"user:{user_id}:birthday", birthday)
+        self.sadd(f"guild:{guild_id}:birthdays", user_id)
+
+
 @pytest.fixture
 def fake_redis(monkeypatch):
-    client = fakeredis.FakeRedis(server=fakeredis.FakeServer(), decode_responses=True)
-    monkeypatch.setattr(bot, "redis_client", client)
-    return client
+    server = fakeredis.FakeServer()
+    monkeypatch.setattr(bot, "redis_client", fakeredis.FakeAsyncRedis(server=server, decode_responses=True))
+    return FakeStore(server=server, decode_responses=True)
 
 
 def frozen_datetime_module(day):
@@ -110,19 +125,21 @@ class Gateway:
         monkeypatch.setattr(state.http, "send_message", gateway.send_message)
         return gateway
 
-    def add_guild(self, guild_id, name, members):
+    def add_guild(self, guild_id, name, members, *, uncached=()):
         """Add a guild as GUILD_CREATE would, with a #general text channel and a voice channel.
 
-        members is a list of (user_id, name). The bot runs with Intents.default(), which
-        has no members intent, so discord.py caches only members who are in a voice
-        channel (Guild._from_data). Each member is put in voice so the bot can see them.
+        members and uncached are lists of (user_id, name). The bot runs with
+        Intents.default(), which has no members intent, so discord.py caches only members
+        who are in a voice channel (Guild._from_data). Each of members is put in voice so
+        the bot can see them. uncached members are in the guild but not in voice, so
+        guild.get_member() returns None for them, as for most members of a real guild (#6).
         """
         general_id, voice_id = guild_id + 1, guild_id + 2
         channel_base = {"guild_id": str(guild_id), "permission_overwrites": [], "nsfw": False, "parent_id": None}
         payload = {
             "id": str(guild_id),
             "name": name,
-            "member_count": len(members) + 1,
+            "member_count": len(members) + len(uncached) + 1,
             "roles": [
                 {
                     "id": str(guild_id),
@@ -149,7 +166,7 @@ class Gateway:
                 },
             ],
             "members": [member_payload(BOT_ID, BOT_NAME, is_bot=True)]
-            + [member_payload(user_id, user_name) for user_id, user_name in members],
+            + [member_payload(user_id, user_name) for user_id, user_name in [*members, *uncached]],
             "voice_states": [
                 {
                     "user_id": str(user_id),
@@ -259,9 +276,8 @@ class Gateway:
     def sent_to(self, channel):
         return [payload for channel_id, payload in self.sent if channel_id == channel.id]
 
-    @staticmethod
-    def interaction(guild, user):
-        return FakeInteraction(guild, user)
+    def interaction(self, guild, user):
+        return FakeInteraction(guild, user, self.state)
 
 
 @pytest.fixture
@@ -273,17 +289,31 @@ class FakeInteraction:
     """The parts of discord.Interaction that bot.py's slash commands use.
 
     sent collects (content, kwargs) for every response and follow-up, in order.
+    payloads holds, in the same order, the payload discord.py builds for each one with
+    handle_message_parameters(): its content, and the call's allowed_mentions merged
+    over the client-wide default, as Webhook.send does for a follow-up.
     deferred holds the keyword arguments of response.defer(), or None if it was not called.
     """
 
-    def __init__(self, guild, user):
+    def __init__(self, guild, user, state):
         self.guild = guild
         self.guild_id = guild.id
         self.user = user
         self.sent = []
+        self.payloads = []
         self.deferred = None
         self.response = FakeInteractionResponse(self)
         self.followup = FakeFollowup(self)
+        self._state = state
+
+    def record(self, content, kwargs):
+        self.sent.append((content, kwargs))
+        with discord.http.handle_message_parameters(
+            content=discord.utils.MISSING if content is None else content,
+            allowed_mentions=kwargs.get("allowed_mentions", discord.utils.MISSING),
+            previous_allowed_mentions=self._state.allowed_mentions,
+        ) as params:
+            self.payloads.append(params.payload)
 
 
 class FakeInteractionResponse:
@@ -306,7 +336,7 @@ class FakeInteractionResponse:
 
     async def send_message(self, content=None, **kwargs):
         self._respond()
-        self._interaction.sent.append((content, kwargs))
+        self._interaction.record(content, kwargs)
 
 
 class FakeFollowup:
@@ -316,4 +346,4 @@ class FakeFollowup:
     async def send(self, content=None, **kwargs):
         if not self._interaction.response.is_done():
             raise RuntimeError("follow-up sent before the interaction was answered")
-        self._interaction.sent.append((content, kwargs))
+        self._interaction.record(content, kwargs)
