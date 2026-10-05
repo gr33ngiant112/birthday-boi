@@ -3,8 +3,8 @@
 Importing bot must not read .env, build the Redis client or start the Discord
 client; main(), which `python bot.py` runs, does all three. Client.run is patched
 or refused wherever bot.py is imported or run, so even a regression cannot log in
-to Discord. redis.from_url only builds a client object, so nothing here needs a
-network, a Redis server or a real Discord token.
+to Discord. redis.asyncio.from_url only builds a client object, so nothing here
+needs a network, a Redis server or a real Discord token.
 """
 
 import importlib
@@ -18,6 +18,7 @@ from unittest import mock
 import discord
 import dotenv
 import redis
+import redis.asyncio
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 FAKE_TOKEN = "not-a-real-token"
@@ -60,12 +61,14 @@ def test_import_does_not_start_the_bot(monkeypatch):
     with (
         mock.patch.object(dotenv, "load_dotenv") as load_dotenv,
         mock.patch.object(redis, "from_url") as from_url,
+        mock.patch.object(redis.asyncio, "from_url") as async_from_url,
     ):
         bot, run = import_fresh_bot(monkeypatch)
 
     run.assert_not_called()
     load_dotenv.assert_not_called()
     from_url.assert_not_called()
+    async_from_url.assert_not_called()
     assert bot.TOKEN is None
     assert bot.redis_client is None
 
@@ -74,7 +77,7 @@ def test_main_runs_client_with_token_from_env(monkeypatch):
     # With DYNO set (Heroku), main() reads its config from the environment only.
     monkeypatch.setenv("DYNO", "pytest")
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
-    # redis.from_url() only builds the client; nothing connects.
+    # redis.asyncio.from_url() only builds the client; nothing connects.
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
     bot, _ = import_fresh_bot(monkeypatch)
 
@@ -86,7 +89,7 @@ def test_main_runs_client_with_token_from_env(monkeypatch):
 
     run.assert_called_once_with(bot.client, FAKE_TOKEN)
     load_dotenv.assert_not_called()
-    assert isinstance(bot.redis_client, redis.Redis)
+    assert isinstance(bot.redis_client, redis.asyncio.Redis)
     assert bot.redis_client.connection_pool.connection_kwargs["host"] == "localhost"
 
 

@@ -1,5 +1,5 @@
 import os
-import redis
+import redis.asyncio
 import ssl
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -18,7 +18,7 @@ REDIS_URL = None
 
 # Function to initialize Redis with SSL handling and timeouts
 def create_redis_client():
-    return redis.from_url(
+    return redis.asyncio.from_url(
         REDIS_URL,
         decode_responses=True,  # Ensures Redis returns strings instead of bytes
         ssl_cert_reqs=ssl.CERT_NONE,  # Correctly handles SSL for Heroku Redis
@@ -30,39 +30,53 @@ def create_redis_client():
 # Created by main(); tests replace it with a fake.
 redis_client = None
 
-# Function to set a birthday in Redis with error handling
-def set_birthday_redis(user_id, birthday):
+# Discord rejects messages longer than this.
+MESSAGE_LIMIT = 2000
+
+# Store a birthday and share it with the guild where it was set, with error handling
+async def set_birthday_redis(guild_id, user_id, birthday):
     try:
-        redis_client.set(f"user:{user_id}:birthday", birthday)
+        # One transaction, so the date and the guild's membership are saved together.
+        async with redis_client.pipeline(transaction=True) as pipe:
+            pipe.set(f"user:{user_id}:birthday", birthday)
+            pipe.sadd(f"guild:{guild_id}:birthdays", user_id)
+            await pipe.execute()
     except redis.RedisError as e:
         print(f"❌ Error setting birthday for user {user_id}: {e}")
 
-# Function to get a birthday from Redis with error handling
-def get_birthday_redis(user_id):
+# Get a member's birthday if they shared it with this guild, with error handling
+async def get_birthday_redis(guild_id, user_id):
     try:
-        birthday = redis_client.get(f"user:{user_id}:birthday")
-        if birthday:
-            return birthday
+        if await redis_client.sismember(f"guild:{guild_id}:birthdays", user_id):
+            birthday = await redis_client.get(f"user:{user_id}:birthday")
+            if birthday:
+                return birthday
     except redis.RedisError as e:
         print(f"❌ Error getting birthday for user {user_id}: {e}")
     return None
 
-# Function to get all birthdays from Redis with error handling
-def get_all_birthdays_redis():
+# Get the (user_id, birthday) pairs shared with a guild, with error handling
+async def get_guild_birthdays_redis(guild_id):
     birthdays = []
     try:
-        keys = redis_client.keys("user:*:birthday")
-        for key in keys:
-            user_id = key.split(":")[1]
-            try:
-                birthday = redis_client.get(key)
-                if birthday:
-                    birthdays.append((user_id, birthday))
-            except redis.RedisError as e:
-                print(f"❌ Error decoding birthday for key {key}: {e}")
+        user_ids = list(await redis_client.smembers(f"guild:{guild_id}:birthdays"))
+        if user_ids:
+            dates = await redis_client.mget([f"user:{user_id}:birthday" for user_id in user_ids])
+            birthdays = [(user_id, birthday) for user_id, birthday in zip(user_ids, dates) if birthday]
     except redis.RedisError as e:
-        print(f"❌ Error retrieving keys: {e}")
+        print(f"❌ Error retrieving birthdays for guild {guild_id}: {e}")
     return birthdays
+
+# Split a header and lines into messages of at most MESSAGE_LIMIT characters,
+# never splitting a line. Every line is a mention and a date, far below the limit.
+def chunk_messages(header, lines):
+    chunks = [header]
+    for line in lines:
+        if len(chunks[-1]) + 1 + len(line) > MESSAGE_LIMIT:
+            chunks.append(line)
+        else:
+            chunks[-1] += "\n" + line
+    return chunks
 
 # Background task to check for upcoming birthdays on the first day of each month
 @tasks.loop(hours=24)
@@ -72,50 +86,36 @@ async def check_upcoming_birthdays():
     if today.day != 1:
         return
 
-    birthdays = get_all_birthdays_redis()
-    upcoming_birthdays = []
     next_month = (today.month % 12) + 1
     month_after = ((today.month + 1) % 12) + 1
 
-    for user_id, birthday_str in birthdays:
+    # Each guild's post lists only the members who shared their birthday with that guild.
+    for guild in client.guilds:
+        channel = discord.utils.get(guild.text_channels, name="general")
+        if not channel:
+            continue
+
+        lines = []
+        for user_id, birthday_str in await get_guild_birthdays_redis(guild.id):
+            try:
+                bd = datetime.date.fromisoformat(birthday_str)
+                upcoming_bd = datetime.date(today.year, bd.month, bd.day)
+                if upcoming_bd < today:
+                    upcoming_bd = datetime.date(today.year + 1, bd.month, bd.day)
+                if upcoming_bd.month in [today.month, next_month, month_after]:
+                    # A public post: the month and day, never the birth year or age.
+                    lines.append(f"<@{user_id}> - {upcoming_bd.strftime('%A, %B %d')}")
+            except Exception as e:
+                print(f"❌ Error processing birthday for user {user_id}: {e}")
+
+        if not lines:
+            continue
+
         try:
-            bd = datetime.date.fromisoformat(birthday_str)
-            upcoming_bd = datetime.date(today.year, bd.month, bd.day)
-            if upcoming_bd < today:
-                upcoming_bd = datetime.date(today.year + 1, bd.month, bd.day)
-            if upcoming_bd.month in [today.month, next_month, month_after]:
-                # Calculate age on the next birthday
-                age = upcoming_bd.year - bd.year
-                upcoming_birthdays.append((user_id, upcoming_bd, age))
+            for chunk in chunk_messages("🎉 **Upcoming Birthdays:**", lines):
+                await channel.send(chunk)
         except Exception as e:
-            print(f"❌ Error processing birthday for user {user_id}: {e}")
-
-    if upcoming_birthdays:
-        # Prepare the table header
-        table_header = f"{'Who'.ljust(25)}{'Turning'.ljust(10)}{'When'.ljust(25)}\n"
-        table_header += "-" * 60 + "\n"
-
-        # Prepare the table rows
-        table_rows = []
-        for user_id, upcoming_bd, age in upcoming_birthdays:
-            user = discord.utils.get(client.get_all_members(), id=int(user_id))
-            if user:
-                who = f"@{user.display_name}".ljust(25)
-                turning = f"{age}".ljust(10)
-                when = upcoming_bd.strftime("%A, %B %d %Y (%m-%d-%Y)").ljust(25)
-                table_rows.append(f"{who}{turning}{when}")
-
-        # Combine the header and rows
-        table = table_header + "\n".join(table_rows)
-
-        # Send the table as a message
-        for guild in client.guilds:
-            channel = discord.utils.get(guild.text_channels, name="general")
-            if channel:
-                try:
-                    await channel.send(f"🎉 **Upcoming Birthdays:**\n```\n{table}\n```")
-                except Exception as e:
-                    print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
+            print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
 
 # Subclassing Client to use app commands (slash commands)
 class MyClient(discord.Client):
@@ -195,8 +195,8 @@ async def on_message(message):
                     continue
 
             if birthday_date:
-                # Store the birthday in Redis
-                set_birthday_redis(message.author.id, birthday_date.isoformat())
+                # Store the birthday and share it with this server
+                await set_birthday_redis(message.guild.id, message.author.id, birthday_date.isoformat())
                 await message.reply(
                     f"✅ Your birthday has been updated to {birthday_date.strftime('%m-%d-%Y')}.",
                     mention_author=False
@@ -222,7 +222,7 @@ async def on_message(message):
             )
 
 # Slash command to set a birthday
-@client.tree.command(name="set_birthday", description="Set your birthday (format: MM-DD-YYYY or YYYY-MM-DD)")
+@client.tree.command(name="set_birthday", description="Set your birthday and share it with this server (format: MM-DD-YYYY or YYYY-MM-DD)")
 @app_commands.describe(date="The date of your birthday (MM-DD-YYYY or YYYY-MM-DD)")
 @app_commands.guild_only()
 async def set_birthday(interaction: discord.Interaction, date: str):
@@ -234,8 +234,8 @@ async def set_birthday(interaction: discord.Interaction, date: str):
             birthday_date = datetime.datetime.strptime(date, "%m-%d-%Y").date()
         except ValueError:
             birthday_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
-        # Store in Redis in ISO format (YYYY-MM-DD)
-        set_birthday_redis(user_id, birthday_date.isoformat())
+        # Store in Redis in ISO format (YYYY-MM-DD), shared with this server
+        await set_birthday_redis(interaction.guild_id, user_id, birthday_date.isoformat())
         # Respond with birthday formatted as MM-DD-YYYY
         await interaction.followup.send(
             f"✅ Your birthday has been set to {birthday_date.strftime('%m-%d-%Y')}.", ephemeral=True
@@ -250,8 +250,9 @@ async def set_birthday(interaction: discord.Interaction, date: str):
 @app_commands.describe(user="The user whose birthday you want to look up")
 @app_commands.guild_only()
 async def get_birthday(interaction: discord.Interaction, user: discord.Member):
+    await interaction.response.defer(ephemeral=True)  # Answer before reading Redis
     user_id = user.id
-    birthday_str = get_birthday_redis(user_id)
+    birthday_str = await get_birthday_redis(interaction.guild_id, user_id)
     if birthday_str:
         try:
             # Parse the stored birthday
@@ -262,48 +263,43 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
             if next_birthday < today:
                 next_birthday = datetime.date(today.year + 1, birthdate.month, birthdate.day)
 
-            # Format the table
-            table = f"{'Birthdate'.ljust(15)}{'Birthday'.ljust(25)}\n"
-            table += "-" * 40 + "\n"
-            table += f"{birthdate.strftime('%m-%d-%Y').ljust(15)}{next_birthday.strftime('%A, %B %d %Y').ljust(25)}"
-
-            await interaction.response.send_message(f"🎂 **{user.display_name}'s Birthday:**\n```\n{table}\n```", ephemeral=True)
+            await interaction.followup.send(
+                f"🎂 **{user.mention}'s Birthday:**\n"
+                f"{birthdate.strftime('%m-%d-%Y')} - next birthday {next_birthday.strftime('%A, %B %d %Y')}",
+                ephemeral=True
+            )
         except Exception as e:
             print(f"❌ Error processing birthday for user {user_id}: {e}")
-            await interaction.response.send_message("❌ An error occurred while retrieving the birthday.", ephemeral=True)
+            await interaction.followup.send("❌ An error occurred while retrieving the birthday.", ephemeral=True)
     else:
-        await interaction.response.send_message(f"❌ {user.display_name} has not set their birthday yet.", ephemeral=True)
+        await interaction.followup.send(f"❌ {user.mention} has not set their birthday yet.", ephemeral=True)
 
 # Command to list all birthdays
 @client.tree.command(name="list_birthdays", description="List all birthdays in the server")
 @app_commands.guild_only()
 async def list_birthdays(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)  # Prevent timeout while fetching data
-    birthdays = get_all_birthdays_redis()
-    if birthdays:
-        # Prepare the table header
-        table = f"{'User'.ljust(25)}{'Birthdate'.ljust(15)}{'Birthday'.ljust(25)}\n"
-        table += "-" * 65 + "\n"
+    birthdays = await get_guild_birthdays_redis(interaction.guild_id)
 
-        # Prepare the table rows
-        today = datetime.date.today()
-        for user_id, birthday_str in birthdays:
-            try:
-                # Parse the stored birthday
-                birthdate = datetime.date.fromisoformat(birthday_str)
-                # Compute the next birthday for the current year
-                next_birthday = datetime.date(today.year, birthdate.month, birthdate.day)
-                if next_birthday < today:
-                    next_birthday = datetime.date(today.year + 1, birthdate.month, birthdate.day)
+    # One line per member. <@id> shows the member's name without the member cache.
+    lines = []
+    today = datetime.date.today()
+    for user_id, birthday_str in birthdays:
+        try:
+            # Parse the stored birthday
+            birthdate = datetime.date.fromisoformat(birthday_str)
+            # Compute the next birthday for the current year
+            next_birthday = datetime.date(today.year, birthdate.month, birthdate.day)
+            if next_birthday < today:
+                next_birthday = datetime.date(today.year + 1, birthdate.month, birthdate.day)
 
-                # Get the user's display name
-                user = interaction.guild.get_member(int(user_id))
-                if user:
-                    table += f"{user.display_name.ljust(25)}{birthdate.strftime('%m-%d-%Y').ljust(15)}{next_birthday.strftime('%A, %B %d %Y').ljust(25)}\n"
-            except Exception as e:
-                print(f"❌ Error processing birthday for user {user_id}: {e}")
+            lines.append(f"<@{user_id}> - {birthdate.strftime('%m-%d-%Y')} - next birthday {next_birthday.strftime('%A, %B %d %Y')}")
+        except Exception as e:
+            print(f"❌ Error processing birthday for user {user_id}: {e}")
 
-        await interaction.followup.send(f"🎉 **Server Birthdays:**\n```\n{table}\n```", ephemeral=True)
+    if lines:
+        for chunk in chunk_messages("🎉 **Server Birthdays:**", lines):
+            await interaction.followup.send(chunk, ephemeral=True)
     else:
         await interaction.followup.send("❌ No birthdays have been set yet.", ephemeral=True)
 
@@ -313,7 +309,7 @@ async def list_birthdays(interaction: discord.Interaction):
 async def forecast_birthdays(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)  # Prevent timeout while fetching data
     today = datetime.date.today()
-    birthdays = get_all_birthdays_redis()
+    birthdays = await get_guild_birthdays_redis(interaction.guild_id)
     upcoming_birthdays = []
     next_month = (today.month % 12) + 1
     month_after = ((today.month + 1) % 12) + 1
@@ -332,25 +328,13 @@ async def forecast_birthdays(interaction: discord.Interaction):
             print(f"❌ Error processing birthday for user {user_id}: {e}")
 
     if upcoming_birthdays:
-        # Prepare the table header
-        table_header = f"{'Who'.ljust(25)}{'When'.ljust(25)}{'Turning'.ljust(10)}\n"
-        table_header += "-" * 60 + "\n"
-
-        # Prepare the table rows
-        table_rows = []
-        for user_id, upcoming_bd, age in upcoming_birthdays:
-            user = interaction.guild.get_member(int(user_id))
-            if user:
-                who = f"@{user.display_name}".ljust(25)
-                when = upcoming_bd.strftime("%A, %B %d").ljust(25)
-                turning = f"{age}".ljust(10)
-                table_rows.append(f"{who}{when}{turning}")
-
-        # Combine the header and rows
-        table = table_header + "\n".join(table_rows)
-
-        # Send the table as a message
-        await interaction.followup.send(f"🎉 **Upcoming Birthdays:**\n```\n{table}\n```", ephemeral=True)
+        # One line per member. <@id> shows the member's name without the member cache.
+        lines = [
+            f"<@{user_id}> - {upcoming_bd.strftime('%A, %B %d')} - turning {age}"
+            for user_id, upcoming_bd, age in upcoming_birthdays
+        ]
+        for chunk in chunk_messages("🎉 **Upcoming Birthdays:**", lines):
+            await interaction.followup.send(chunk, ephemeral=True)
     else:
         await interaction.followup.send("❌ No upcoming birthdays in the next 60 or 90 days.", ephemeral=True)
 
