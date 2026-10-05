@@ -120,7 +120,8 @@ async def check_upcoming_birthdays():
 # Subclassing Client to use app commands (slash commands)
 class MyClient(discord.Client):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
+        # Messages echo text that members control, such as display names: never let them ping anyone.
+        super().__init__(intents=discord.Intents.default(), allowed_mentions=discord.AllowedMentions.none())
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
@@ -143,8 +144,9 @@ async def on_message(message):
     if message.author == client.user:
         return
 
-    # Check if the bot is mentioned
-    if client.user.mentioned_in(message):
+    # Answer only a direct mention of the bot in a server: not DMs, and not
+    # @everyone or @here, which client.user.mentioned_in() also counts.
+    if message.guild is not None and not message.mention_everyone and client.user in message.mentions:
         content = message.content.lower()
 
         # Use spaCy to process the message
@@ -197,41 +199,32 @@ async def on_message(message):
                 set_birthday_redis(message.author.id, birthday_date.isoformat())
                 await message.reply(
                     f"✅ Your birthday has been updated to {birthday_date.strftime('%m-%d-%Y')}.",
-                    mention_author=True
+                    mention_author=False
                 )
             else:
                 await message.reply(
                     "❌ I couldn't understand the date format. Please try again with a valid date.",
-                    mention_author=True
+                    mention_author=False
                 )
 
+        # Lookups get one public reply with no date or name in it; /get_birthday
+        # shows a birthday only to the member who asks.
         elif intent == "get":
-            birthday_str = get_birthday_redis(message.author.id)
-            if birthday_str:
-                birthday_date = datetime.date.fromisoformat(birthday_str)
-                response = f"🎂 Your birthday is on {birthday_date.strftime('%m-%d-%Y')}."
-            else:
-                response = "❌ You haven't set your birthday yet."
-            await message.reply(response, mention_author=True)
+            await message.reply(
+                "🔒 Use /get_birthday and pick yourself to see your birthday. Only you will see the answer.",
+                mention_author=False
+            )
 
         elif intent == "get_other":
-            mentioned_users = message.mentions
-            if mentioned_users:
-                for user in mentioned_users:
-                    if user.id != client.user.id:
-                        birthday_str = get_birthday_redis(user.id)
-                        if birthday_str:
-                            birthday_date = datetime.date.fromisoformat(birthday_str)
-                            response = f"🎂 {user.display_name}'s birthday is on {birthday_date.strftime('%m-%d-%Y')}."
-                        else:
-                            response = f"❌ {user.display_name} hasn't set their birthday yet."
-                        await message.reply(response, mention_author=True)
-            else:
-                await message.reply("❌ You didn't mention anyone. Please try again.", mention_author=True)
+            await message.reply(
+                "🔒 Use /get_birthday and pick the member to see their birthday. Only you will see the answer.",
+                mention_author=False
+            )
 
 # Slash command to set a birthday
 @client.tree.command(name="set_birthday", description="Set your birthday (format: MM-DD-YYYY or YYYY-MM-DD)")
 @app_commands.describe(date="The date of your birthday (MM-DD-YYYY or YYYY-MM-DD)")
+@app_commands.guild_only()
 async def set_birthday(interaction: discord.Interaction, date: str):
     await interaction.response.defer(ephemeral=True)  # Prevent Discord timeout
     user_id = interaction.user.id
@@ -255,6 +248,7 @@ async def set_birthday(interaction: discord.Interaction, date: str):
 # Command to query birthday
 @client.tree.command(name="get_birthday", description="Get a user's birthday")
 @app_commands.describe(user="The user whose birthday you want to look up")
+@app_commands.guild_only()
 async def get_birthday(interaction: discord.Interaction, user: discord.Member):
     user_id = user.id
     birthday_str = get_birthday_redis(user_id)
@@ -282,6 +276,7 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
 
 # Command to list all birthdays
 @client.tree.command(name="list_birthdays", description="List all birthdays in the server")
+@app_commands.guild_only()
 async def list_birthdays(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)  # Prevent timeout while fetching data
     birthdays = get_all_birthdays_redis()
@@ -314,8 +309,9 @@ async def list_birthdays(interaction: discord.Interaction):
 
 # Command to forecast upcoming birthdays
 @client.tree.command(name="forecast_birthdays", description="Show upcoming birthdays in the next 60 and 90 days")
+@app_commands.guild_only()
 async def forecast_birthdays(interaction: discord.Interaction):
-    await interaction.response.defer()  # Prevent timeout while fetching data
+    await interaction.response.defer(ephemeral=True)  # Prevent timeout while fetching data
     today = datetime.date.today()
     birthdays = get_all_birthdays_redis()
     upcoming_birthdays = []
@@ -354,9 +350,9 @@ async def forecast_birthdays(interaction: discord.Interaction):
         table = table_header + "\n".join(table_rows)
 
         # Send the table as a message
-        await interaction.followup.send(f"🎉 **Upcoming Birthdays:**\n```\n{table}\n```")
+        await interaction.followup.send(f"🎉 **Upcoming Birthdays:**\n```\n{table}\n```", ephemeral=True)
     else:
-        await interaction.followup.send("❌ No upcoming birthdays in the next 60 or 90 days.")
+        await interaction.followup.send("❌ No upcoming birthdays in the next 60 or 90 days.", ephemeral=True)
 
 def main():
     global TOKEN, REDIS_URL, redis_client

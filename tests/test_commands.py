@@ -22,11 +22,6 @@ def offered_in_dms(payload):
     return payload.get("dm_permission", True)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#23: no command is guild_only or sets allowed_contexts, so Discord offers them in DMs",
-)
 def test_slash_commands_are_not_offered_in_dms():
     tree = bot.client.tree
     # The payloads tree.sync() sends to Discord.
