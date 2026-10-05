@@ -2,8 +2,9 @@
 
 Importing bot must not read .env, build the Redis client or start the Discord
 client; main(), which `python bot.py` runs, does all three. Client.run is patched
-wherever main() runs, and redis.from_url only builds a client object, so nothing
-here needs a network, a Redis server or a real Discord token.
+or refused wherever bot.py is imported or run, so even a regression cannot log in
+to Discord. redis.from_url only builds a client object, so nothing here needs a
+network, a Redis server or a real Discord token.
 """
 
 import importlib
@@ -22,14 +23,31 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 FAKE_TOKEN = "not-a-real-token"
 LOCAL_REDIS_URL = "redis://localhost:6379/0"
 
+# Runs in a fresh interpreter: fail instead of logging in if import calls client.run.
+IMPORT_BOT = """
+import sys
+import discord
+
+def refuse_to_run(*args, **kwargs):
+    sys.exit("client.run() was called during import")
+
+discord.Client.run = refuse_to_run
+import bot
+print(bot.__file__)
+"""
+
 
 def import_fresh_bot(monkeypatch):
-    """Import bot.py as a new module object; the shared one is restored afterwards."""
+    """Import bot.py as a new module object, with Client.run patched during the import.
+
+    Returns (module, the run mock). The shared bot module is restored afterwards.
+    """
     monkeypatch.delitem(sys.modules, "bot", raising=False)
-    try:
-        return importlib.import_module("bot")
-    finally:
-        sys.modules.pop("bot", None)
+    with mock.patch.object(discord.Client, "run", autospec=True) as run:
+        try:
+            return importlib.import_module("bot"), run
+        finally:
+            sys.modules.pop("bot", None)
 
 
 def test_import_does_not_start_the_bot(monkeypatch):
@@ -40,11 +58,10 @@ def test_import_does_not_start_the_bot(monkeypatch):
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
 
     with (
-        mock.patch.object(discord.Client, "run", autospec=True) as run,
         mock.patch.object(dotenv, "load_dotenv") as load_dotenv,
         mock.patch.object(redis, "from_url") as from_url,
     ):
-        bot = import_fresh_bot(monkeypatch)
+        bot, run = import_fresh_bot(monkeypatch)
 
     run.assert_not_called()
     load_dotenv.assert_not_called()
@@ -59,7 +76,7 @@ def test_main_runs_client_with_token_from_env(monkeypatch):
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     # redis.from_url() only builds the client; nothing connects.
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
-    bot = import_fresh_bot(monkeypatch)
+    bot, _ = import_fresh_bot(monkeypatch)
 
     with (
         mock.patch.object(discord.Client, "run", autospec=True) as run,
@@ -78,7 +95,7 @@ def test_main_loads_dotenv_before_reading_config(monkeypatch):
     monkeypatch.delenv("DYNO", raising=False)
     monkeypatch.delenv("DISCORD_TOKEN", raising=False)
     monkeypatch.delenv("REDIS_URL", raising=False)
-    bot = import_fresh_bot(monkeypatch)
+    bot, _ = import_fresh_bot(monkeypatch)
 
     def fake_load_dotenv():
         # Stands in for a developer's .env file; no real .env is read.
@@ -115,7 +132,7 @@ def test_import_without_config_from_an_empty_directory(tmp_path):
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH")]))
 
     result = subprocess.run(
-        [sys.executable, "-c", "import bot; print(bot.__file__)"],
+        [sys.executable, "-c", IMPORT_BOT],
         cwd=tmp_path,
         env=env,
         capture_output=True,

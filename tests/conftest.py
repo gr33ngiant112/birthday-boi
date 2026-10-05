@@ -16,12 +16,17 @@ import datetime
 import itertools
 import types
 import weakref
+from unittest import mock
 
 import discord
 import fakeredis
 import pytest
 
-import bot
+# Importing bot must not start the client (test_smoke.py checks it). Refuse
+# Client.run here too, so a regression fails the run instead of logging in with
+# whatever token the environment or a local .env holds.
+with mock.patch.object(discord.Client, "run", side_effect=RuntimeError("client.run() was called during import")):
+    import bot
 
 BOT_ID = 100000000000000001
 BOT_NAME = "Birthday Boi"
