@@ -28,8 +28,8 @@ def test_slash_commands_are_not_offered_in_dms():
     tree = bot.client.tree
     # The payloads tree.sync() sends to Discord.
     payloads = {command.name: command.to_dict(tree) for command in tree.get_commands()}
-    if not {"set_birthday", "get_birthday", "list_birthdays", "forecast_birthdays"} <= payloads.keys():
-        pytest.fail(f"setup: expected the four slash commands, got {sorted(payloads)}")
+    if not {"set_birthday", "get_birthday", "list_birthdays", "forecast_birthdays", "forget_birthday"} <= payloads.keys():
+        pytest.fail(f"setup: expected the five slash commands, got {sorted(payloads)}")
     assert [name for name, payload in payloads.items() if offered_in_dms(payload)] == []
 
 
@@ -52,7 +52,9 @@ def test_list_birthdays_with_100_users_stays_within_discord_message_limit(fake_r
     assert {user_id: text.count(f"<@{user_id}>") for user_id, _ in members} == {user_id: 1 for user_id, _ in members}
 
 
-@pytest.mark.parametrize("command", ["set_birthday", "get_birthday", "list_birthdays", "forecast_birthdays"])
+@pytest.mark.parametrize(
+    "command", ["set_birthday", "get_birthday", "list_birthdays", "forecast_birthdays", "forget_birthday"]
+)
 def test_command_answers_the_interaction_before_any_redis_call(command, fake_redis, freeze_today, gateway, monkeypatch):
     freeze_today(datetime.date(2026, 9, 29))
     guild = gateway.add_guild(GUILD_ID, "Guild", [MEMBER])

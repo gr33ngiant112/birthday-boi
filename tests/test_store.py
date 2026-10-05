@@ -1,5 +1,5 @@
-"""#25 and #6: birthdays are stored per guild, read without KEYS or SCAN, and listed
-without the member cache.
+"""#25 and #6: birthdays are stored per guild, read and deleted without KEYS or SCAN,
+and listed without the member cache.
 
 Under Intents.default() the bot caches only members in a voice channel, so a view
 that looks names up in the cache shows almost nobody (#6). Rows render as <@id>,
@@ -11,6 +11,7 @@ import asyncio
 import datetime
 
 import pytest
+import redis.asyncio
 
 import bot
 
@@ -96,8 +97,10 @@ def test_no_view_reads_with_keys_or_scan(fake_redis, freeze_today, gateway, monk
 
         return call
 
+    # On the client class, so that pipelines refuse them too: /forget_birthday and
+    # the cleanup when the bot leaves a guild read through a pipeline.
     for name in ("keys", "scan", "scan_iter"):
-        monkeypatch.setattr(bot.redis_client, name, refuse(name))
+        monkeypatch.setattr(redis.asyncio.Redis, name, refuse(name))
 
     member = guild.get_member(MEMBER[0])
     texts = {}
@@ -115,6 +118,9 @@ def test_no_view_reads_with_keys_or_scan(fake_redis, freeze_today, gateway, monk
         guild, ASKER, f"<@{gateway.bot_user.id}> my birthday is December 25 1990", mentions=[gateway.mention_bot()]
     )
     asyncio.run(bot.on_message(message))
+    # Then the paths that delete: ASKER forgets their birthday, and the bot leaves the guild.
+    asyncio.run(bot.forget_birthday.callback(gateway.interaction(guild, guild.get_member(ASKER[0]))))
+    asyncio.run(bot.client.on_guild_remove(guild))
 
     expected = {
         "get_birthday": "11-03-1990",
@@ -124,4 +130,6 @@ def test_no_view_reads_with_keys_or_scan(fake_redis, freeze_today, gateway, monk
     }
     if any(shown not in texts[view] for view, shown in expected.items()):
         pytest.fail(f"setup: each view should show the stored member, got {texts!r}")
+    if fake_redis.contents():
+        pytest.fail(f"setup: forgetting and leaving should delete every key, got {fake_redis.contents()!r}")
     assert refused == []
