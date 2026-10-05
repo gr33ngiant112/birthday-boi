@@ -12,14 +12,9 @@ import spacy  # Added spaCy for enhanced message extraction
 # Load spaCy's English model
 nlp = spacy.load("en_core_web_sm")
 
-# If running on Heroku, DYNO will be set; otherwise load .env for local testing.
-if os.getenv("DYNO"):
-    TOKEN = os.getenv("DISCORD_TOKEN")
-    REDIS_URL = os.getenv("REDIS_URL")
-else:
-    load_dotenv()
-    TOKEN = os.getenv("DISCORD_TOKEN")
-    REDIS_URL = os.getenv("REDIS_URL")
+# Read from the environment by main(), so importing this module reads no config.
+TOKEN = None
+REDIS_URL = None
 
 # Function to initialize Redis with SSL handling and timeouts
 def create_redis_client():
@@ -32,8 +27,8 @@ def create_redis_client():
         retry_on_timeout=True
     )
 
-# Initialize Redis client
-redis_client = create_redis_client()
+# Created by main(); tests replace it with a fake.
+redis_client = None
 
 # Function to set a birthday in Redis with error handling
 def set_birthday_redis(user_id, birthday):
@@ -363,5 +358,24 @@ async def forecast_birthdays(interaction: discord.Interaction):
     else:
         await interaction.followup.send("❌ No upcoming birthdays in the next 60 or 90 days.")
 
-# Run the bot
-client.run(TOKEN)
+def main():
+    global TOKEN, REDIS_URL, redis_client
+
+    # If running on Heroku, DYNO will be set; otherwise load .env for local testing.
+    if os.getenv("DYNO"):
+        TOKEN = os.getenv("DISCORD_TOKEN")
+        REDIS_URL = os.getenv("REDIS_URL")
+    else:
+        load_dotenv()
+        TOKEN = os.getenv("DISCORD_TOKEN")
+        REDIS_URL = os.getenv("REDIS_URL")
+
+    # Initialize Redis client
+    redis_client = create_redis_client()
+
+    # Run the bot
+    client.run(TOKEN)
+
+
+if __name__ == "__main__":
+    main()
