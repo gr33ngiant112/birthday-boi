@@ -180,6 +180,19 @@ def test_message_pinging_everyone_gets_no_reply(bot_mentioned, fake_redis, gatew
     assert gateway.sent == []
 
 
+def test_message_not_mentioning_the_bot_gets_no_reply(fake_redis, gateway):
+    # Passes on develop too. It is the only test that fails if on_message stops
+    # requiring a direct mention of the bot. As above, the content is set even
+    # though Discord may deliver such a message without it.
+    guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, CAROL])
+    fake_redis.set(f"user:{CAROL[0]}:birthday", CAROL_BIRTHDAY.isoformat())
+    message = gateway.message(guild, ASKER, f"when is <@{CAROL[0]}>'s birthday?", mentions=[gateway.mention(*CAROL)])
+
+    asyncio.run(bot.on_message(message))
+
+    assert gateway.sent == []
+
+
 def test_asking_for_a_members_birthday_shows_no_date_or_name(fake_redis, gateway):
     guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, CAROL])
     fake_redis.set(f"user:{CAROL[0]}:birthday", CAROL_BIRTHDAY.isoformat())
