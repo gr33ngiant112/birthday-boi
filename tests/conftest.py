@@ -172,30 +172,60 @@ class Gateway:
         return discord.utils.get(guild.text_channels, name="general")
 
     @staticmethod
-    def mention(user_id, name, *, nick=None):
-        """A user in a MESSAGE_CREATE's mentions list, with the partial member Discord adds in guilds."""
+    def mention(user_id, name, *, nick=None, member=True):
+        """A user in a MESSAGE_CREATE's mentions list, with the partial member Discord adds in guilds.
+
+        member=False leaves the partial member out, as for a user who is not in the
+        guild or a mention in a DM.
+        """
         data = user_payload(user_id, name)
-        data["member"] = {"nick": nick, "roles": [], "joined_at": TIMESTAMP, "flags": 0, "deaf": False, "mute": False}
+        if member:
+            data["member"] = {
+                "nick": nick,
+                "roles": [],
+                "joined_at": TIMESTAMP,
+                "flags": 0,
+                "deaf": False,
+                "mute": False,
+            }
         return data
 
-    def mention_bot(self):
-        return self.mention(BOT_ID, BOT_NAME)
+    def mention_bot(self, *, member=True):
+        return self.mention(BOT_ID, BOT_NAME, member=member)
 
-    def message(self, guild, author, content, *, mentions=()):
-        """A MESSAGE_CREATE in the guild's #general. author is (user_id, name)."""
+    def message(self, guild, author, content, *, mentions=(), mention_everyone=False):
+        """A MESSAGE_CREATE in the guild's #general. author is (user_id, name).
+
+        mention_everyone is the flag Discord sets on a message that pings @everyone or @here.
+        """
         channel = self.general(guild)
+        payload = self._message_payload(channel, author, content, mentions, mention_everyone)
+        payload["guild_id"] = str(guild.id)
+        payload["member"] = {"roles": [], "joined_at": TIMESTAMP, "flags": 0, "deaf": False, "mute": False}
+        return discord.Message(state=self.state, channel=channel, data=payload)
+
+    def dm_message(self, author, content, *, mentions=()):
+        """A MESSAGE_CREATE in a DM between author, (user_id, name), and the bot.
+
+        A DM has no guild_id or member data: build its mentions with member=False.
+        """
         author_id, author_name = author
-        payload = {
+        channel_data = {"id": str(next(self._ids)), "type": 1, "recipients": [user_payload(author_id, author_name)]}
+        channel = discord.DMChannel(me=self.bot_user, state=self.state, data=channel_data)
+        payload = self._message_payload(channel, author, content, mentions, False)
+        return discord.Message(state=self.state, channel=channel, data=payload)
+
+    def _message_payload(self, channel, author, content, mentions, mention_everyone):
+        author_id, author_name = author
+        return {
             "id": str(next(self._ids)),
             "channel_id": str(channel.id),
-            "guild_id": str(guild.id),
             "type": 0,
             "content": content,
             "author": user_payload(author_id, author_name),
-            "member": {"roles": [], "joined_at": TIMESTAMP, "flags": 0, "deaf": False, "mute": False},
             "mentions": list(mentions),
             "mention_roles": [],
-            "mention_everyone": False,
+            "mention_everyone": mention_everyone,
             "attachments": [],
             "embeds": [],
             "pinned": False,
@@ -204,7 +234,6 @@ class Gateway:
             "edited_timestamp": None,
             "flags": 0,
         }
-        return discord.Message(state=self.state, channel=channel, data=payload)
 
     async def send_message(self, channel_id, *, params):
         payload = copy.deepcopy(params.payload)
@@ -244,6 +273,7 @@ class FakeInteraction:
     """The parts of discord.Interaction that bot.py's slash commands use.
 
     sent collects (content, kwargs) for every response and follow-up, in order.
+    deferred holds the keyword arguments of response.defer(), or None if it was not called.
     """
 
     def __init__(self, guild, user):
@@ -251,6 +281,7 @@ class FakeInteraction:
         self.guild_id = guild.id
         self.user = user
         self.sent = []
+        self.deferred = None
         self.response = FakeInteractionResponse(self)
         self.followup = FakeFollowup(self)
 
@@ -271,6 +302,7 @@ class FakeInteractionResponse:
 
     async def defer(self, **kwargs):
         self._respond()
+        self._interaction.deferred = kwargs
 
     async def send_message(self, content=None, **kwargs):
         self._respond()
