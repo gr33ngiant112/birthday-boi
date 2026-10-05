@@ -143,7 +143,7 @@ def test_forget_birthday_deletes_the_date_and_every_guild_membership(fake_redis,
 
 
 def test_no_view_shows_the_birthday_after_forget_birthday(fake_redis, freeze_today, gateway):
-    freeze_today(datetime.date(2026, 10, 1))  # the 1st, so the monthly task posts; the forecast covers December
+    freeze_today(datetime.date(2026, 10, 1))  # the 1st, so the monthly task posts; Dec 25 is 85 days away
     guilds = [gateway.add_guild(guild_id, "Guild", [SETTER, CAROL]) for guild_id in (GUILD_A, GUILD_B)]
     for guild in guilds:
         fake_redis.seed_birthday(guild.id, SETTER[0], SETTER_BIRTHDAY.isoformat())

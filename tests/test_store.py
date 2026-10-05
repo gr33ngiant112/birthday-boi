@@ -20,8 +20,8 @@ OTHER_GUILD_ID = 300000000000009000
 ASKER = (200000000000003001, "asker")
 MEMBER = (200000000000003002, "member")
 UNCACHED = [(200000000000003101 + i, f"uncached-{i}") for i in range(3)]
-# On 2026-10-01 each falls in all three views: the forecast covers November and
-# December, the monthly post October to December.
+# On 2026-10-01 each falls in all three views: the forecast covers the next 90 days,
+# to Dec 30, and the monthly post October to December.
 UNCACHED_BIRTHDAYS = ["1990-11-03", "1991-11-24", "1992-12-15"]
 
 
@@ -53,7 +53,7 @@ def test_view_lists_members_the_bot_has_not_cached(view, fake_redis, freeze_toda
     ("view", "no_birthdays"),
     [
         ("list_birthdays", "❌ No birthdays have been set yet."),
-        ("forecast_birthdays", "❌ No upcoming birthdays in the next 60 or 90 days."),
+        ("forecast_birthdays", "❌ No birthdays in the next 90 days."),
     ],
     ids=["list_birthdays", "forecast_birthdays"],
 )

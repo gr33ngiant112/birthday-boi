@@ -30,7 +30,7 @@ HOSTILE_MEMBERS = [
     (200000000000001902, f"<@&{HOSTILE_ROLE_ID}>"),
     (200000000000001903, "```@here```"),
 ]
-# On 2026-10-01 all three fall in the forecast (November, December) and in the monthly post.
+# On 2026-10-01 all three fall in the forecast (the next 90 days) and in the monthly post.
 HOSTILE_BIRTHDAYS = ["1990-11-03", "1991-11-24", "1992-12-15"]
 # Ages on the next birthday from 2026-10-01: 44, 52 and 67, none of which can be a day of the month.
 MONTHLY_MEMBERS = [
@@ -353,7 +353,7 @@ def test_asking_for_your_own_birthday_shows_no_date(fake_redis, gateway):
 
 @pytest.mark.parametrize("upcoming", [True, False], ids=["a birthday upcoming", "none upcoming"])
 def test_forecast_birthdays_answers_only_the_caller(upcoming, fake_redis, freeze_today, gateway):
-    freeze_today(datetime.date(2026, 2, 5))  # the forecast covers March and April
+    freeze_today(datetime.date(2026, 2, 5))  # the forecast covers the next 90 days, to May 6
     guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, CAROL])
     if upcoming:
         fake_redis.seed_birthday(GUILD_A, CAROL[0], CAROL_BIRTHDAY.isoformat())
