@@ -56,3 +56,16 @@ source venv/bin/activate
 ### Installing
 
 1. Register the bot as a discord app [here](https://discord.com/developers/applications). Remember to _save the token_.
+
+### Inviting the bot
+
+Invite the bot with only the access it uses. Replace `<CLIENT_ID>` with your application's client ID from the Developer Portal:
+
+```
+https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot%20applications.commands&permissions=68608
+```
+
+- Scopes: `bot` and `applications.commands` (the slash commands).
+- Permissions: View Channels, Send Messages and Read Message History (`68608`). The bot replies to mentions and posts the monthly list in #general, and Discord requires Read Message History to reply to a message.
+- Never grant Administrator or Mention Everyone; the bot needs neither.
+- On the Developer Portal's Bot page, leave the Message Content and Server Members privileged intents off. `bot.py` uses `discord.Intents.default()`, which requests neither.
