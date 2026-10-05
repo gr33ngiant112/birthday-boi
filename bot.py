@@ -36,10 +36,12 @@ MESSAGE_LIMIT = 2000
 # Store a birthday and share it with the guild where it was set, with error handling
 async def set_birthday_redis(guild_id, user_id, birthday):
     try:
-        # One transaction, so the date and the guild's membership are saved together.
+        # One transaction, so the date, the guild's membership and the member's list
+        # of guilds (which /forget_birthday reads) are saved together.
         async with redis_client.pipeline(transaction=True) as pipe:
             pipe.set(f"user:{user_id}:birthday", birthday)
             pipe.sadd(f"guild:{guild_id}:birthdays", user_id)
+            pipe.sadd(f"user:{user_id}:guilds", guild_id)
             await pipe.execute()
     except redis.RedisError as e:
         print(f"❌ Error setting birthday for user {user_id}: {e}")
@@ -66,6 +68,39 @@ async def get_guild_birthdays_redis(guild_id):
     except redis.RedisError as e:
         print(f"❌ Error retrieving birthdays for guild {guild_id}: {e}")
     return birthdays
+
+# Delete a member's birthday and remove them from every guild's set. Returns whether
+# anything was stored. Redis errors are raised, so a failed delete is never reported as done.
+async def forget_birthday_redis(user_id):
+    guilds_key = f"user:{user_id}:guilds"
+
+    async def delete_all(pipe):
+        guild_ids = await pipe.smembers(guilds_key)
+        pipe.multi()
+        pipe.delete(f"user:{user_id}:birthday", guilds_key)
+        for guild_id in guild_ids:
+            pipe.srem(f"guild:{guild_id}:birthdays", user_id)
+
+    # transaction() WATCHes the member's list of guilds: if a /set_birthday adds a guild
+    # after the read, the delete is not applied and runs again with the new list.
+    return any(await redis_client.transaction(delete_all, guilds_key))
+
+# Stop sharing a member's birthday with one guild. When no other guild has it, no guild
+# can see the date, so it is deleted along with the member's list of guilds.
+async def remove_birthday_from_guild_redis(guild_id, user_id):
+    guilds_key = f"user:{user_id}:guilds"
+
+    async def remove(pipe):
+        other_guild_ids = await pipe.smembers(guilds_key) - {str(guild_id)}
+        pipe.multi()
+        pipe.srem(f"guild:{guild_id}:birthdays", user_id)
+        if other_guild_ids:
+            pipe.srem(guilds_key, guild_id)
+        else:
+            pipe.delete(f"user:{user_id}:birthday", guilds_key)
+
+    # WATCHed as in forget_birthday_redis, so a guild added meanwhile keeps the date.
+    await redis_client.transaction(remove, guilds_key)
 
 # Split a header and lines into messages of at most MESSAGE_LIMIT characters,
 # never splitting a line. Every line is a mention and a date, far below the limit.
@@ -137,6 +172,14 @@ client = MyClient()
 @client.event
 async def on_ready():
     print(f'✅ Logged in as {client.user}')
+
+# Called when the bot is removed from a guild: kicked, banned or left, or the guild was
+# deleted. Nobody there can see the guild's birthdays any more.
+@client.event
+async def on_guild_remove(guild):
+    # Removing every member empties the guild's set, and Redis deletes an empty set.
+    for user_id in await redis_client.smembers(f"guild:{guild.id}:birthdays"):
+        await remove_birthday_from_guild_redis(guild.id, user_id)
 
 @client.event
 async def on_message(message):
@@ -337,6 +380,22 @@ async def forecast_birthdays(interaction: discord.Interaction):
             await interaction.followup.send(chunk, ephemeral=True)
     else:
         await interaction.followup.send("❌ No upcoming birthdays in the next 60 or 90 days.", ephemeral=True)
+
+# Command to delete your birthday from every server
+@client.tree.command(name="forget_birthday", description="Delete your birthday from every server")
+@app_commands.guild_only()
+async def forget_birthday(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)  # Answer before reading Redis
+    try:
+        forgotten = await forget_birthday_redis(interaction.user.id)
+    except redis.RedisError as e:
+        print(f"❌ Error deleting a birthday: {e}")
+        await interaction.followup.send("❌ Your birthday could not be deleted. Please try again later.", ephemeral=True)
+        return
+    if forgotten:
+        await interaction.followup.send("✅ Your birthday has been deleted from every server.", ephemeral=True)
+    else:
+        await interaction.followup.send("✅ You had no birthday stored, so there was nothing to delete.", ephemeral=True)
 
 def main():
     global TOKEN, REDIS_URL, redis_client
