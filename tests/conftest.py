@@ -41,11 +41,17 @@ class FakeStore(fakeredis.FakeRedis):
     def seed_birthday(self, guild_id, user_id, birthday):
         """Store birthday (an ISO date) as /set_birthday run in that guild does.
 
-        That is the user's date, and the user's id in the guild's set: each guild's
-        views list only the members in its own set.
+        That is the user's date, the user's id in the guild's set (each guild's views
+        list only the members in its own set), and the guild's id in the user's list
+        of guilds (which /forget_birthday reads).
         """
         self.set(f"user:{user_id}:birthday", birthday)
         self.sadd(f"guild:{guild_id}:birthdays", user_id)
+        self.sadd(f"user:{user_id}:guilds", guild_id)
+
+    def contents(self):
+        """Every key on the fake server and its value: a string, or a set of strings."""
+        return {key: self.smembers(key) if self.type(key) == "set" else self.get(key) for key in self.keys()}
 
 
 @pytest.fixture

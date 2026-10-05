@@ -69,3 +69,7 @@ https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot%20applicati
 - Permissions: View Channels, Send Messages and Read Message History (`68608`). The bot replies to mentions and posts the monthly list in #general, and Discord requires Read Message History to reply to a message.
 - Never grant Administrator or Mention Everyone; the bot needs neither.
 - On the Developer Portal's Bot page, leave the Message Content and Server Members privileged intents off. `bot.py` uses `discord.Intents.default()`, which requests neither.
+
+### Privacy
+
+[PRIVACY.md](PRIVACY.md) describes what the bot stores, who can see it, and how to delete it. To delete your birthday, run `/forget_birthday` in any server the bot shares with you.
