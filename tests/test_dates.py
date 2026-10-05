@@ -119,6 +119,8 @@ def test_monthly_post_includes_a_leap_day_birthday(fake_redis, freeze_today, gat
         pytest.param(datetime.date(2027, 3, 1), datetime.date(2028, 2, 29), id="2027-03-01"),
         pytest.param(datetime.date(2028, 2, 29), datetime.date(2028, 2, 29), id="2028-02-29"),
         pytest.param(datetime.date(2028, 3, 1), datetime.date(2029, 2, 28), id="2028-03-01"),
+        # 2100 is divisible by 4 but has no Feb 29.
+        pytest.param(datetime.date(2099, 3, 1), datetime.date(2100, 2, 28), id="2099-03-01"),
     ],
 )
 def test_next_occurrence_of_a_leap_day_birthday(today, expected):
