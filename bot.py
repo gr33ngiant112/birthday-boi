@@ -231,13 +231,12 @@ async def check_upcoming_birthdays():
             print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
 
 # Before READY the bot has no guilds, so a run would post nowhere. A bot that becomes ready
-# on the 1st after MONTHLY_POST_TIME has missed that day's run, so it runs once now; the
-# guilds that already had this month's post are marked and get no second one.
+# after MONTHLY_POST_TIME has missed that day's run, so it runs once now: on the 1st that is
+# the month's post, and the guilds that already had it are marked and get no second one.
 @check_upcoming_birthdays.before_loop
 async def before_check_upcoming_birthdays():
     await client.wait_until_ready()
-    now = datetime.datetime.now(datetime.timezone.utc)
-    if now.day == 1 and now.timetz() > MONTHLY_POST_TIME:
+    if datetime.datetime.now(datetime.timezone.utc).timetz() > MONTHLY_POST_TIME:
         try:
             await check_upcoming_birthdays()
         except Exception as e:
