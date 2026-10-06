@@ -476,15 +476,15 @@ async def forget_birthday(interaction: discord.Interaction):
     else:
         await interaction.followup.send("✅ You had no birthday stored, so there was nothing to delete.", ephemeral=True)
 
-# Send Redis a PING at startup. It goes through a client of its own, closed here, because
-# redis.asyncio connections belong to the event loop that opened them, and client.run()
-# then starts a new loop for the bot.
+# Send Redis a PING at startup. It goes through a client of its own, whose connections are
+# closed here, because redis.asyncio connections belong to the event loop that opened them,
+# and client.run() then starts a new loop for the bot.
 async def ping_redis():
     startup_client = create_redis_client()
     try:
         await startup_client.ping()
     finally:
-        await startup_client.aclose()
+        await startup_client.aclose(close_connection_pool=True)
 
 def main():
     global TOKEN, REDIS_URL, redis_client

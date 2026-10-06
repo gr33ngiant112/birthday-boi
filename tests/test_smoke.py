@@ -166,25 +166,27 @@ def test_main_pings_redis_with_a_client_of_its_own(monkeypatch):
     # client a connection on the closed startup loop, and its first command in the bot's
     # loop would raise "RuntimeError: Event loop is closed". fakeredis connections work in
     # any loop, so this checks the cause: when client.run() is called, the PING has been
-    # sent, and not through the bot's client, which has taken no connection yet.
+    # sent, not through the bot's client, and its connection is closed.
     monkeypatch.setenv("DYNO", "pytest")
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
     bot, _ = import_fresh_bot(monkeypatch)
     server = fakeredis.FakeServer()
     monkeypatch.setattr(bot, "create_redis_client", lambda: fakeredis.FakeAsyncRedis(server=server, decode_responses=True))
-    taken = []  # the pool of each connection taken, in order
+    taken = []  # (pool, connection) for each connection taken, in order
     get_connection = redis.asyncio.ConnectionPool.get_connection
 
-    async def get_connection_noting_the_pool(pool, *args, **kwargs):
-        taken.append(pool)
-        return await get_connection(pool, *args, **kwargs)
+    async def get_connection_noting_it(pool, *args, **kwargs):
+        connection = await get_connection(pool, *args, **kwargs)
+        taken.append((pool, connection))
+        return connection
 
-    monkeypatch.setattr(redis.asyncio.ConnectionPool, "get_connection", get_connection_noting_the_pool)
+    monkeypatch.setattr(redis.asyncio.ConnectionPool, "get_connection", get_connection_noting_it)
     at_run = {}
 
     def run(client, token):
-        at_run["taken"] = list(taken)
+        at_run["pools"] = [pool for pool, _ in taken]
+        at_run["still connected"] = [connection.is_connected for _, connection in taken]
         # The bot's first Redis command, in a new event loop as client.run() would start.
         at_run["ping from the bot's loop"] = asyncio.run(bot.redis_client.ping())
 
@@ -192,8 +194,9 @@ def test_main_pings_redis_with_a_client_of_its_own(monkeypatch):
         bot.main()
 
     client_run.assert_called_once_with(bot.client, FAKE_TOKEN)
-    assert len(at_run["taken"]) == 1  # the startup PING
-    assert at_run["taken"][0] is not bot.redis_client.connection_pool
+    assert len(at_run["pools"]) == 1  # the startup PING
+    assert at_run["pools"][0] is not bot.redis_client.connection_pool
+    assert at_run["still connected"] == [False]
     assert at_run["ping from the bot's loop"] is True
 
 
