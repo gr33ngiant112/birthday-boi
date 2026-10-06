@@ -3,7 +3,10 @@
 - fake_redis: bot.redis_client becomes an empty fakeredis.FakeAsyncRedis, in place of
   the redis.asyncio client main() creates in production. The fixture returns a
   synchronous FakeStore on the same fake server, for seeding and checks.
-- freeze_today: fixes the date bot.py gets from datetime.date.today().
+- freeze_today: fixes the date bot.py gets from datetime.date.today(), and the time it
+  gets from datetime.datetime.now(): 15:00 UTC on that date, when the monthly post goes out.
+- freeze_now: a frozen clock for bot.py and for discord.py's task loop, which the test
+  moves with set(). It also sets the zone of the host, which date.today() reads.
 - gateway: real discord.py guilds, channels, members and messages, built from
   gateway-shaped payloads on the bot client's own ConnectionState. Channel messages
   are captured at HTTPClient.send_message, after discord.py has built the final
@@ -21,6 +24,7 @@ import weakref
 from unittest import mock
 
 import discord
+import discord.ext.tasks
 import fakeredis
 import pytest
 
@@ -33,6 +37,8 @@ with mock.patch.object(discord.Client, "run", side_effect=RuntimeError("client.r
 BOT_ID = 100000000000000001
 BOT_NAME = "Birthday Boi"
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
+# When the monthly post goes out on the 1st (#14). bot.py has no timezone setting, so UTC.
+POST_TIME = datetime.time(15, 0, tzinfo=datetime.timezone.utc)
 
 
 class FakeStore(fakeredis.FakeRedis):
@@ -53,6 +59,11 @@ class FakeStore(fakeredis.FakeRedis):
         """Every key on the fake server and its value: a string, or a set of strings."""
         return {key: self.smembers(key) if self.type(key) == "set" else self.get(key) for key in self.keys()}
 
+    def clear_monthly_post_markers(self):
+        """Delete the markers of the monthly posts made so far, so the task posts as if it had not (#14)."""
+        for key in self.keys("announce:*"):
+            self.delete(key)
+
 
 @pytest.fixture
 def fake_redis(monkeypatch):
@@ -61,29 +72,75 @@ def fake_redis(monkeypatch):
     return FakeStore(server=server, decode_responses=True)
 
 
-def frozen_datetime_module(day):
-    """A copy of the datetime module whose date.today() returns day."""
+class FrozenClock:
+    """A clock that reads the same moment, an aware datetime, until set() moves it.
+
+    host_zone is the zone of the machine that runs the bot: date.today() and a naive
+    datetime.now() read the moment there. CI and Heroku run in UTC.
+    """
+
+    def __init__(self, moment, host_zone=datetime.timezone.utc):
+        self.moment = moment
+        self.host_zone = host_zone
+
+    def set(self, moment):
+        self.moment = moment
+
+
+def frozen_datetime_module(clock):
+    """A copy of the datetime module whose date.today() and datetime.now() read clock."""
 
     class FrozenDate(datetime.date):
         @classmethod
         def today(cls):
+            day = clock.moment.astimezone(clock.host_zone).date()
             return cls(day.year, day.month, day.day)
+
+    class FrozenDateTime(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:  # the host's local time, without a zone, as datetime.now() returns it
+                return clock.moment.astimezone(clock.host_zone).replace(tzinfo=None)
+            return clock.moment.astimezone(tz)
 
     frozen = types.ModuleType("datetime")
     frozen.__dict__.update(vars(datetime))
     frozen.date = FrozenDate
+    frozen.datetime = FrozenDateTime
     return frozen
 
 
 @pytest.fixture
 def freeze_today(monkeypatch):
-    """Return freeze(date): bot.py's datetime.date.today() returns that date afterwards.
+    """Return freeze(date): bot.py's datetime.date.today() returns that date afterwards, and its
+    datetime.datetime.now() returns 15:00 UTC on that date, when the monthly post goes out.
 
     Only the datetime name inside bot.py is replaced; the real module is untouched.
     """
 
     def freeze(day):
-        monkeypatch.setattr(bot, "datetime", frozen_datetime_module(day))
+        clock = FrozenClock(datetime.datetime.combine(day, POST_TIME))
+        monkeypatch.setattr(bot, "datetime", frozen_datetime_module(clock))
+
+    return freeze
+
+
+@pytest.fixture
+def freeze_now(monkeypatch):
+    """Return freeze(moment, host_zone=UTC), which freezes the clock at moment, an aware datetime,
+    and returns the FrozenClock; clock.set() moves it.
+
+    bot.py reads it, and so does discord.py's task loop: discord.ext.tasks, which picks the time
+    of each run, and discord.utils, whose compute_timedelta() gives the real seconds the loop
+    sleeps until then. Only the datetime name inside those modules is replaced.
+    """
+
+    def freeze(moment, host_zone=datetime.timezone.utc):
+        clock = FrozenClock(moment, host_zone)
+        frozen = frozen_datetime_module(clock)
+        for module in (bot, discord.ext.tasks, discord.utils):
+            monkeypatch.setattr(module, "datetime", frozen)
+        return clock
 
     return freeze
 
@@ -131,8 +188,10 @@ class Gateway:
         monkeypatch.setattr(state.http, "send_message", gateway.send_message)
         return gateway
 
-    def add_guild(self, guild_id, name, members, *, uncached=()):
-        """Add a guild as GUILD_CREATE would, with a #general text channel and a voice channel.
+    def add_guild(self, guild_id, name, members, *, uncached=(), text_channel="general"):
+        """Add a guild as GUILD_CREATE would, with a text channel and a voice channel.
+
+        The text channel is #general unless text_channel gives it another name.
 
         members and uncached are lists of (user_id, name). The bot runs with
         Intents.default(), which has no members intent, so discord.py caches only members
@@ -160,7 +219,7 @@ class Gateway:
                 }
             ],
             "channels": [
-                {**channel_base, "id": str(general_id), "type": 0, "name": "general", "position": 0},
+                {**channel_base, "id": str(general_id), "type": 0, "name": text_channel, "position": 0},
                 {
                     **channel_base,
                     "id": str(voice_id),

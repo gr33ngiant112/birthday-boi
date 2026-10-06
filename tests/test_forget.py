@@ -46,7 +46,7 @@ def guilds_of(user):
     return f"user:{user[0]}:guilds"
 
 
-def shown_in(gateway, guild, asker, member):
+def shown_in(gateway, fake_redis, guild, asker, member):
     """The text of each view in guild: /get_birthday about member, /list_birthdays and
     /forecast_birthdays run by asker, and the monthly post."""
     shown = {
@@ -58,6 +58,9 @@ def shown_in(gateway, guild, asker, member):
         ]
     }
     gateway.sent.clear()
+    # The task posts once a month in each guild (#14): without the markers of earlier runs,
+    # it posts as the first run of the month does.
+    fake_redis.clear_monthly_post_markers()
     asyncio.run(bot.check_upcoming_birthdays())
     shown["monthly post"] = "\n".join(payload.get("content") or "" for payload in gateway.sent_to(gateway.general(guild)))
     return shown
@@ -149,9 +152,9 @@ def test_no_view_shows_the_birthday_after_forget_birthday(fake_redis, freeze_tod
         fake_redis.seed_birthday(guild.id, SETTER[0], SETTER_BIRTHDAY.isoformat())
     month_and_day = SETTER_BIRTHDAY.strftime("%B %d")  # every view shows it
 
-    before = {guild.id: shown_in(gateway, guild, CAROL, SETTER) for guild in guilds}
+    before = {guild.id: shown_in(gateway, fake_redis, guild, CAROL, SETTER) for guild in guilds}
     run_command(gateway, guilds[0], SETTER, "forget_birthday")
-    after = {guild.id: shown_in(gateway, guild, CAROL, SETTER) for guild in guilds}
+    after = {guild.id: shown_in(gateway, fake_redis, guild, CAROL, SETTER) for guild in guilds}
 
     if any(month_and_day not in text for shown in before.values() for text in shown.values()):
         pytest.fail(f"setup: every view should show the birthday before /forget_birthday, got {before!r}")
