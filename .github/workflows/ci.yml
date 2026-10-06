@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # ready_for_review starts CI when a draft is marked ready; while a PR is a draft, every job is skipped.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [develop]
 
@@ -9,12 +11,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # One group per PR, and one per commit pushed to develop. A new push to a PR cancels that
+  # PR's older run; develop push runs never wait for or cancel each other, because cancelled
+  # runs email the owner.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     name: Lint, test and build
+    # Skipped while a PR is a draft. On a push, github.event.pull_request is null and
+    # null == false is true (GitHub compares them as numbers), so pushes to develop run it.
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -36,6 +44,7 @@ jobs:
 
   secret-scan:
     name: Secret scan (gitleaks)
+    if: github.event.pull_request.draft == false # skipped while a PR is a draft, as above
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -61,6 +70,7 @@ jobs:
 
   dependency-scan:
     name: Dependency scan (osv-scanner)
+    if: github.event.pull_request.draft == false # skipped while a PR is a draft, as above
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
