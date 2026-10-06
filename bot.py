@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 import datetime
 import calendar
 import asyncio
+import logging
+import sys
 from urllib.parse import urlparse
 import spacy  # Added spaCy for enhanced message extraction
 
@@ -47,7 +49,21 @@ FORECAST_DAYS = 90
 # A birth year may be at most this many years before the current year.
 MAX_AGE_YEARS = 120
 
-# Store a birthday and share it with the guild where it was set, with error handling
+# Errors are logged here. A log line never includes a birth date.
+log = logging.getLogger(__name__)
+
+# What a member is told when Redis fails. The chat reply is public, so neither has a date.
+SAVE_FAILED = "⚠️ Storage is unavailable, so your birthday was not saved. Please try again later."
+READ_FAILED = "⚠️ Storage is unavailable. Please try again later."
+
+# Raised by the storage helpers below when Redis fails, so that callers can tell an outage
+# from "nothing stored". The redis.RedisError is its __cause__. Its message is only the
+# error's type: callers log it, and the error of a failed transaction quotes its commands,
+# birth date included.
+class StoreUnavailable(Exception):
+    pass
+
+# Store a birthday and share it with the guild where it was set. Raises StoreUnavailable.
 async def set_birthday_redis(guild_id, user_id, birthday):
     try:
         # One transaction, so the date, the guild's membership and the member's list
@@ -58,9 +74,9 @@ async def set_birthday_redis(guild_id, user_id, birthday):
             pipe.sadd(f"user:{user_id}:guilds", guild_id)
             await pipe.execute()
     except redis.RedisError as e:
-        print(f"❌ Error setting birthday for user {user_id}: {e}")
+        raise StoreUnavailable(type(e).__name__) from e
 
-# Get a member's birthday if they shared it with this guild, with error handling
+# Get a member's birthday if they shared it with this guild. Raises StoreUnavailable.
 async def get_birthday_redis(guild_id, user_id):
     try:
         if await redis_client.sismember(f"guild:{guild_id}:birthdays", user_id):
@@ -68,10 +84,10 @@ async def get_birthday_redis(guild_id, user_id):
             if birthday:
                 return birthday
     except redis.RedisError as e:
-        print(f"❌ Error getting birthday for user {user_id}: {e}")
+        raise StoreUnavailable(type(e).__name__) from e
     return None
 
-# Get the (user_id, birthday) pairs shared with a guild, with error handling
+# Get the (user_id, birthday) pairs shared with a guild. Raises StoreUnavailable.
 async def get_guild_birthdays_redis(guild_id):
     birthdays = []
     try:
@@ -80,7 +96,7 @@ async def get_guild_birthdays_redis(guild_id):
             dates = await redis_client.mget([f"user:{user_id}:birthday" for user_id in user_ids])
             birthdays = [(user_id, birthday) for user_id, birthday in zip(user_ids, dates) if birthday]
     except redis.RedisError as e:
-        print(f"❌ Error retrieving birthdays for guild {guild_id}: {e}")
+        raise StoreUnavailable(type(e).__name__) from e
     return birthdays
 
 # Delete a member's birthday and remove them from every guild's set. Returns whether
@@ -162,8 +178,15 @@ async def check_upcoming_birthdays():
         if not channel:
             continue
 
+        try:
+            birthdays = await get_guild_birthdays_redis(guild.id)
+        except StoreUnavailable as e:
+            # Skip this guild and go on with the others: an exception would stop the task.
+            log.error("Storage unavailable in the monthly post; skipped guild %s (%s)", guild.id, e)
+            continue
+
         lines = []
-        for user_id, birthday_str in await get_guild_birthdays_redis(guild.id):
+        for user_id, birthday_str in birthdays:
             try:
                 bd = datetime.date.fromisoformat(birthday_str)
                 upcoming_bd = next_occurrence(bd.month, bd.day, today)
@@ -274,7 +297,12 @@ async def on_message(message):
                 await message.reply(error, mention_author=False)
             elif birthday_date:
                 # Store the birthday and share it with this server
-                await set_birthday_redis(message.guild.id, message.author.id, birthday_date.isoformat())
+                try:
+                    await set_birthday_redis(message.guild.id, message.author.id, birthday_date.isoformat())
+                except StoreUnavailable as e:
+                    log.error("Storage unavailable in a chat set (%s)", e)
+                    await message.reply(SAVE_FAILED, mention_author=False)
+                    return
                 await message.reply(
                     f"✅ Your birthday has been updated to {birthday_date.strftime('%m-%d-%Y')}.",
                     mention_author=False
@@ -327,6 +355,9 @@ async def set_birthday(interaction: discord.Interaction, date: str):
         await interaction.followup.send(
             "❌ Invalid date format! Use MM-DD-YYYY or YYYY-MM-DD.", ephemeral=True
         )
+    except StoreUnavailable as e:
+        log.error("Storage unavailable in /set_birthday (%s)", e)
+        await interaction.followup.send(SAVE_FAILED, ephemeral=True)
 
 # Command to query birthday
 @client.tree.command(name="get_birthday", description="Get a user's birthday")
@@ -335,7 +366,12 @@ async def set_birthday(interaction: discord.Interaction, date: str):
 async def get_birthday(interaction: discord.Interaction, user: discord.Member):
     await interaction.response.defer(ephemeral=True)  # Answer before reading Redis
     user_id = user.id
-    birthday_str = await get_birthday_redis(interaction.guild_id, user_id)
+    try:
+        birthday_str = await get_birthday_redis(interaction.guild_id, user_id)
+    except StoreUnavailable as e:
+        log.error("Storage unavailable in /get_birthday (%s)", e)
+        await interaction.followup.send(READ_FAILED, ephemeral=True)
+        return
     if birthday_str:
         try:
             # Parse the stored birthday
@@ -360,7 +396,12 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
 @app_commands.guild_only()
 async def list_birthdays(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)  # Prevent timeout while fetching data
-    birthdays = await get_guild_birthdays_redis(interaction.guild_id)
+    try:
+        birthdays = await get_guild_birthdays_redis(interaction.guild_id)
+    except StoreUnavailable as e:
+        log.error("Storage unavailable in /list_birthdays (%s)", e)
+        await interaction.followup.send(READ_FAILED, ephemeral=True)
+        return
 
     # One line per member. <@id> shows the member's name without the member cache.
     lines = []
@@ -388,7 +429,12 @@ async def list_birthdays(interaction: discord.Interaction):
 async def forecast_birthdays(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)  # Prevent timeout while fetching data
     today = datetime.date.today()
-    birthdays = await get_guild_birthdays_redis(interaction.guild_id)
+    try:
+        birthdays = await get_guild_birthdays_redis(interaction.guild_id)
+    except StoreUnavailable as e:
+        log.error("Storage unavailable in /forecast_birthdays (%s)", e)
+        await interaction.followup.send(READ_FAILED, ephemeral=True)
+        return
     upcoming_birthdays = []
 
     for user_id, birthday_str in birthdays:
@@ -430,6 +476,16 @@ async def forget_birthday(interaction: discord.Interaction):
     else:
         await interaction.followup.send("✅ You had no birthday stored, so there was nothing to delete.", ephemeral=True)
 
+# Send Redis a PING at startup. It goes through a client of its own, whose connections are
+# closed here, because redis.asyncio connections belong to the event loop that opened them,
+# and client.run() then starts a new loop for the bot.
+async def ping_redis():
+    startup_client = create_redis_client()
+    try:
+        await startup_client.ping()
+    finally:
+        await startup_client.aclose(close_connection_pool=True)
+
 def main():
     global TOKEN, REDIS_URL, redis_client
 
@@ -444,6 +500,12 @@ def main():
 
     # Initialize Redis client
     redis_client = create_redis_client()
+
+    # Stop here, before logging in to Discord, if Redis does not answer.
+    try:
+        asyncio.run(ping_redis())
+    except redis.RedisError as e:
+        sys.exit(f"Cannot start: Redis did not answer a PING. Check REDIS_URL and that Redis is running. {type(e).__name__}: {e}")
 
     # Run the bot
     client.run(TOKEN)
