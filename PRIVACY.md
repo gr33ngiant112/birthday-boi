@@ -20,7 +20,7 @@ In Discord, only members of a server where you set your birthday can see it, and
 
 - `/get_birthday` and `/list_birthdays` show your full date, with the year, to the member who runs them. Only that member sees the answer.
 - `/forecast_birthdays` shows the month and day and the age you will turn (and so your birth year), if your birthday is today or in the next 90 days. Only the member who runs it sees the answer.
-- On the first day of each month, the bot posts the birthdays in that month and the next two in the server's #general channel. The post shows the month and day, never the year or age, and everyone who can read #general sees it.
+- On the first day of each month, at 15:00 UTC, the bot posts the birthdays in that month and the next two in the server's #general channel. The post shows the month and day, never the year or age, and everyone who can read #general sees it. So that a server gets one post a month, the bot records the server's ID and the month of its post, and deletes that record after 40 days.
 - If you set your birthday by mentioning the bot, everyone who can read that channel sees your message and the bot's reply, which repeats the full date with the year.
 - `/set_birthday` answers only you.
 
