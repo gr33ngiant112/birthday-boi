@@ -1,3 +1,4 @@
+import argparse
 import os
 import redis.asyncio
 import ssl
@@ -19,6 +20,10 @@ nlp = spacy.load("en_core_web_sm")
 # Read from the environment by main(), so importing this module reads no config.
 TOKEN = None
 REDIS_URL = None
+# DEV_GUILD_ID: a test server, where the commands are synced on every start and show up at once.
+DEV_GUILD_ID = None
+# Set by --sync: replace the bot's commands in every server with this build's at startup.
+SYNC_COMMANDS = False
 
 # Function to initialize Redis with timeouts. A rediss:// URL checks the server's
 # certificate and hostname; REDIS_TLS_INSECURE=1 turns both checks off, for servers
@@ -251,8 +256,16 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        await self.tree.sync()
-        print("✅ Slash commands synced globally.")
+        if DEV_GUILD_ID:
+            dev_guild = discord.Object(id=DEV_GUILD_ID)
+            self.tree.copy_global_to(guild=dev_guild)
+            await self.tree.sync(guild=dev_guild)
+            print(f"✅ Slash commands synced to the development server {DEV_GUILD_ID}.")
+        # A global sync replaces the commands in every server, so a build that is missing a
+        # command deletes it everywhere: it runs only when asked.
+        if SYNC_COMMANDS:
+            await self.tree.sync()
+            print("✅ Slash commands synced globally.")
         # Start the upcoming birthdays task after commands are synced.
         check_upcoming_birthdays.start()
 
@@ -524,8 +537,17 @@ async def ping_redis():
     finally:
         await startup_client.aclose(close_connection_pool=True)
 
-def main():
-    global TOKEN, REDIS_URL, redis_client
+def main(argv=()):
+    global TOKEN, REDIS_URL, DEV_GUILD_ID, SYNC_COMMANDS, redis_client
+
+    parser = argparse.ArgumentParser(description="Run the birthday-boi Discord bot.")
+    parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="replace the slash commands in every server with this build's; "
+        "run once after a release that changes them",
+    )
+    SYNC_COMMANDS = parser.parse_args(argv).sync
 
     # If running on Heroku, DYNO will be set; otherwise load .env for local testing.
     if os.getenv("DYNO"):
@@ -535,6 +557,13 @@ def main():
         load_dotenv()
         TOKEN = os.getenv("DISCORD_TOKEN")
         REDIS_URL = os.getenv("REDIS_URL")
+
+    DEV_GUILD_ID = None
+    if os.getenv("DEV_GUILD_ID"):
+        try:
+            DEV_GUILD_ID = int(os.getenv("DEV_GUILD_ID"))
+        except ValueError:
+            sys.exit("Cannot start: DEV_GUILD_ID must be a server ID, a number.")
 
     # Initialize Redis client
     redis_client = create_redis_client()
@@ -550,4 +579,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
