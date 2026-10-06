@@ -11,9 +11,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  # A new push to a PR cancels that PR's older run. A push to develop waits for the
-  # running one instead of cancelling it, because cancelled runs email the owner.
+  # One group per PR, and one per commit pushed to develop. A new push to a PR cancels that
+  # PR's older run; develop push runs never wait for or cancel each other, because cancelled
+  # runs email the owner.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
