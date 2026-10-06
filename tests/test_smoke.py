@@ -155,8 +155,8 @@ def test_main_exits_with_a_clear_message_when_redis_does_not_answer(monkeypatch)
     run.assert_not_called()
     # A string exit code is printed to stderr, and the process exits with status 1.
     assert exited.value.code == (
-        "Cannot start: Redis did not answer a PING (ConnectionError: FakeRedis is emulating a connection error.). "
-        "Check REDIS_URL and that Redis is running."
+        "Cannot start: Redis did not answer a PING. Check REDIS_URL and that Redis is running. "
+        "ConnectionError: FakeRedis is emulating a connection error."
     )
 
 
