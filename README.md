@@ -70,6 +70,10 @@ https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot%20applicati
 - Never grant Administrator or Mention Everyone; the bot needs neither.
 - On the Developer Portal's Bot page, leave the Message Content and Server Members privileged intents off. `bot.py` uses `discord.Intents.default()`, which requests neither.
 
+### Running
+
+`python bot.py`, the Procfile's `worker` command, reads `DISCORD_TOKEN` and `REDIS_URL` from the environment; when `DYNO` is not set (a local run), it loads them from a `.env` file first. Before it logs in to Discord, the bot sends Redis a PING. If Redis does not answer, the bot exits with status 1 and prints the reason, so start Redis first and check `REDIS_URL`. For a `rediss://` server with a self-signed certificate, such as Heroku's, set `REDIS_TLS_INSECURE=1`, or the certificate check fails and the bot does not start.
+
 ### Privacy
 
 [PRIVACY.md](PRIVACY.md) describes what the bot stores, who can see it, and how to delete it. To delete your birthday, run `/forget_birthday` in any server the bot shares with you.
