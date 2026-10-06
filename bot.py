@@ -7,6 +7,7 @@ import discord
 from dotenv import load_dotenv
 import datetime
 import asyncio
+from urllib.parse import urlparse
 import spacy  # Added spaCy for enhanced message extraction
 
 # Load spaCy's English model
@@ -16,15 +17,21 @@ nlp = spacy.load("en_core_web_sm")
 TOKEN = None
 REDIS_URL = None
 
-# Function to initialize Redis with SSL handling and timeouts
+# Function to initialize Redis with timeouts. A rediss:// URL checks the server's
+# certificate and hostname; REDIS_TLS_INSECURE=1 turns both checks off, for servers
+# with self-signed certificates such as Heroku's:
+# https://devcenter.heroku.com/articles/connecting-heroku-redis
 def create_redis_client():
+    tls_options = {}
+    if urlparse(REDIS_URL).scheme == "rediss" and os.getenv("REDIS_TLS_INSECURE") == "1":
+        tls_options["ssl_cert_reqs"] = ssl.CERT_NONE
     return redis.asyncio.from_url(
         REDIS_URL,
         decode_responses=True,  # Ensures Redis returns strings instead of bytes
-        ssl_cert_reqs=ssl.CERT_NONE,  # Correctly handles SSL for Heroku Redis
         socket_timeout=10,
         socket_connect_timeout=10,
-        retry_on_timeout=True
+        retry_on_timeout=True,
+        **tls_options
     )
 
 # Created by main(); tests replace it with a fake.
