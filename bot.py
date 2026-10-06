@@ -49,6 +49,12 @@ FORECAST_DAYS = 90
 # A birth year may be at most this many years before the current year.
 MAX_AGE_YEARS = 120
 
+# The monthly post goes out at this time on the 1st. There is no timezone setting, so UTC.
+MONTHLY_POST_TIME = datetime.time(hour=15, tzinfo=datetime.timezone.utc)
+
+# A guild's monthly post is marked in Redis for this long: past the end of its month.
+MONTHLY_POST_MARKER_TTL = datetime.timedelta(days=40)
+
 # Errors are logged here. A log line never includes a birth date.
 log = logging.getLogger(__name__)
 
@@ -132,6 +138,14 @@ async def remove_birthday_from_guild_redis(guild_id, user_id):
     # WATCHed as in forget_birthday_redis, so a guild added meanwhile keeps the date.
     await redis_client.transaction(remove, guilds_key)
 
+# Mark a guild's post for a month ("YYYY-MM") as sent. Returns False if it was marked
+# already, by an earlier run or another bot process. Raises StoreUnavailable.
+async def mark_monthly_post_redis(guild_id, month):
+    try:
+        return bool(await redis_client.set(f"announce:{guild_id}:{month}", 1, nx=True, ex=MONTHLY_POST_MARKER_TTL))
+    except redis.RedisError as e:
+        raise StoreUnavailable(type(e).__name__) from e
+
 # Split a header and lines into messages of at most MESSAGE_LIMIT characters,
 # never splitting a line. Every line is a mention and a date, far below the limit.
 def chunk_messages(header, lines):
@@ -161,10 +175,11 @@ def birth_date_error(birthday_date, today):
         return f"❌ That date is more than {MAX_AGE_YEARS} years ago. Please check the year and try again."
     return None
 
-# Background task to check for upcoming birthdays on the first day of each month
-@tasks.loop(hours=24)
+# Background task: every day at MONTHLY_POST_TIME, and on the 1st it posts the upcoming birthdays
+@tasks.loop(time=MONTHLY_POST_TIME)
 async def check_upcoming_birthdays():
-    today = datetime.date.today()
+    # The date in UTC, the zone of MONTHLY_POST_TIME, whatever the host's zone is.
+    today = datetime.datetime.now(datetime.timezone.utc).date()
     # Only run on the first day of the month.
     if today.day != 1:
         return
@@ -185,25 +200,49 @@ async def check_upcoming_birthdays():
             log.error("Storage unavailable in the monthly post; skipped guild %s (%s)", guild.id, e)
             continue
 
-        lines = []
+        upcoming = []
         for user_id, birthday_str in birthdays:
             try:
                 bd = datetime.date.fromisoformat(birthday_str)
                 upcoming_bd = next_occurrence(bd.month, bd.day, today)
                 if upcoming_bd.month in [today.month, next_month, month_after]:
-                    # A public post: the month and day, never the birth year or age.
-                    lines.append(f"<@{user_id}> - {upcoming_bd.strftime('%A, %B %d')}")
+                    upcoming.append((upcoming_bd, user_id))
             except Exception as e:
                 print(f"❌ Error processing birthday for user {user_id}: {e}")
 
-        if not lines:
+        if not upcoming:
             continue
 
+        # Marked before sending, so a restart or a second process never posts again this month.
+        # A send that fails is not retried.
+        try:
+            if not await mark_monthly_post_redis(guild.id, today.strftime("%Y-%m")):
+                continue
+        except StoreUnavailable as e:
+            log.error("Storage unavailable in the monthly post; skipped guild %s (%s)", guild.id, e)
+            continue
+
+        # Soonest first. A public post: the month and day, never the birth year or age.
+        lines = [f"<@{user_id}> - {upcoming_bd.strftime('%A, %B %d')}" for upcoming_bd, user_id in sorted(upcoming)]
         try:
             for chunk in chunk_messages("🎉 **Upcoming Birthdays:**", lines):
                 await channel.send(chunk)
         except Exception as e:
             print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
+
+# Before READY the bot has no guilds, so a run would post nowhere. A bot that becomes ready
+# on the 1st after MONTHLY_POST_TIME has missed that day's run, so it runs once now; the
+# guilds that already had this month's post are marked and get no second one.
+@check_upcoming_birthdays.before_loop
+async def before_check_upcoming_birthdays():
+    await client.wait_until_ready()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if now.day == 1 and now.timetz() > MONTHLY_POST_TIME:
+        try:
+            await check_upcoming_birthdays()
+        except Exception as e:
+            # Raised here, the error would end the task before its first scheduled run.
+            log.error("The monthly post at startup failed (%s)", type(e).__name__)
 
 # Subclassing Client to use app commands (slash commands)
 class MyClient(discord.Client):
