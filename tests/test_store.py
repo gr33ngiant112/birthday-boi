@@ -130,6 +130,8 @@ def test_no_view_reads_with_keys_or_scan(fake_redis, freeze_today, gateway, monk
     }
     if any(shown not in texts[view] for view, shown in expected.items()):
         pytest.fail(f"setup: each view should show the stored member, got {texts!r}")
-    if fake_redis.contents():
-        pytest.fail(f"setup: forgetting and leaving should delete every key, got {fake_redis.contents()!r}")
+    # Only the marker of the month's post may stay (#14): it holds no member's data, and Redis deletes it.
+    left = {key: value for key, value in fake_redis.contents().items() if not key.startswith("announce:")}
+    if left:
+        pytest.fail(f"setup: forgetting and leaving should delete every other key, got {left!r}")
     assert refused == []
