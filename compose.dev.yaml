@@ -1,0 +1,18 @@
+# Local development only (#28): a Redis for `python bot.py` on this machine.
+#
+#   docker compose -f compose.dev.yaml up -d
+#   then, in .env: REDIS_URL=redis://127.0.0.1:6379/0
+#
+# The port is published on 127.0.0.1 only. REDIS_PORT picks another host port.
+# `docker compose -f compose.dev.yaml down` stops Redis; add -v to delete its data.
+services:
+  redis:
+    # redis:7.4-alpine, pinned to its digest
+    image: redis:7.4-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
