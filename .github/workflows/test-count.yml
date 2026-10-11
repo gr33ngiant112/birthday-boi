@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   test-count:
-    name: Test count
+    name: Compare with the base branch
     if: github.event.pull_request.draft == false # skipped while a PR is a draft, as in ci.yml
     runs-on: ubuntu-latest
     timeout-minutes: 10

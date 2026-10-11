@@ -28,7 +28,8 @@ TESTS_DIR = "tests/"
 # Any mention of xfail, since tests here mark known bugs through helpers such as xfail_16(); for
 # skips only pytest's own forms, because "skip" is a common word in test names.
 MARKER = re.compile(r"xfail|\bpytest\.(?:mark\.)?skip(?:if)?\b")
-COLLECTED = re.compile(r"^(?:(\d+) tests? collected|no tests collected)\b")
+# "141 tests collected", "1/2 tests collected (1 deselected)" or "no tests collected".
+COLLECTED = re.compile(r"^(?:(\d+)(?:/\d+)? tests? collected|no tests collected)\b")
 
 
 def git(*args):
@@ -74,8 +75,9 @@ def collect(sha):
 
 def changed_files(base, head):
     """(status, path) of each file the change adds, modifies or deletes; a rename is a delete and an add."""
-    rows = git("diff", "--name-status", "--no-renames", base, head).splitlines()
-    return [tuple(row.split("\t", 1)) for row in rows if row]
+    # -z: NUL-separated status and path, with no quoting of unusual file names.
+    fields = git("diff", "--name-status", "--no-renames", "-z", base, head).split("\0")
+    return list(zip(fields[0::2], fields[1::2]))
 
 
 def marker_changes(base, head):
