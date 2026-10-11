@@ -106,7 +106,7 @@ def test_setup_hook_starts_the_task_loops(monkeypatch):
 
 
 def test_subcommands_are_named_with_their_groups():
-    # bot.py has no groups yet, so this checks command_names() on a tree that has them.
+    # bot.py has no groups yet, so this checks command_names() on commands in nested groups.
     group = app_commands.Group(name="birthday", description="Birthdays")
     admin = app_commands.Group(name="admin", description="Admin", parent=group)
 

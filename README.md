@@ -53,7 +53,7 @@ python3 -m venv .
 source venv/bin/activate   
 ```
 
-4. Run `pip install -r requirements.txt -r requirements-dev.txt`, then `pre-commit install`. Before each commit, the hook runs the lint and the command registry test with this venv's ruff and pytest, so commit with the venv active.
+4. Run `pip install -r requirements.txt -r requirements-dev.txt`, then `pre-commit install`. Before each commit, the hook runs ruff's syntax checks and the command registry test with this venv's ruff and pytest, so commit with the venv active.
 
 ### Installing
 
