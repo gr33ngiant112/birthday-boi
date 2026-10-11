@@ -126,16 +126,77 @@ def test_main_loads_dotenv_before_reading_config(monkeypatch):
     run.assert_called_once_with(bot.client, FAKE_TOKEN)
 
 
-def test_running_bot_py_as_a_script_calls_main(monkeypatch):
-    # The Procfile starts the bot with `python bot.py`.
+def run_bot_py(monkeypatch, *flags):
+    """Run bot.py as `python bot.py FLAGS...` does, with the startup PING stubbed.
+
+    The caller patches Client.run. Returns the script's globals.
+    """
     monkeypatch.setenv("DYNO", "pytest")
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
+    monkeypatch.delenv("DEV_GUILD_ID", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(REPO_ROOT / "bot.py"), *flags])
 
-    with mock.patch.object(discord.Client, "run", autospec=True) as run, stub_redis_ping():
-        namespace = runpy.run_path(str(REPO_ROOT / "bot.py"), run_name="__main__")
+    with stub_redis_ping():
+        return runpy.run_path(str(REPO_ROOT / "bot.py"), run_name="__main__")
+
+
+def test_running_bot_py_as_a_script_calls_main(monkeypatch):
+    # The Procfile starts the bot with `python bot.py`, which syncs no commands (#28).
+    with mock.patch.object(discord.Client, "run", autospec=True) as run:
+        namespace = run_bot_py(monkeypatch)
 
     run.assert_called_once_with(namespace["client"], FAKE_TOKEN)
+    assert namespace["SYNC_COMMANDS"] is False
+
+
+def test_bot_py_sync_turns_on_the_global_sync(monkeypatch):
+    with mock.patch.object(discord.Client, "run", autospec=True) as run:
+        namespace = run_bot_py(monkeypatch, "--sync")
+
+    run.assert_called_once_with(namespace["client"], FAKE_TOKEN)
+    assert namespace["SYNC_COMMANDS"] is True
+
+
+def test_an_unknown_flag_stops_bot_py_before_it_logs_in(monkeypatch, capsys):
+    with mock.patch.object(discord.Client, "run", autospec=True) as run, pytest.raises(SystemExit) as exited:
+        run_bot_py(monkeypatch, "--snyc")
+
+    run.assert_not_called()
+    assert exited.value.code == 2  # argparse's usage error
+    assert "unrecognized arguments: --snyc" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, None), ("", None), ("300000000000019000", 300000000000019000)])
+def test_main_reads_the_development_server_from_dev_guild_id(monkeypatch, value, expected):
+    monkeypatch.setenv("DYNO", "pytest")
+    monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
+    monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
+    if value is None:
+        monkeypatch.delenv("DEV_GUILD_ID", raising=False)
+    else:
+        monkeypatch.setenv("DEV_GUILD_ID", value)
+    bot, _ = import_fresh_bot(monkeypatch)
+
+    with mock.patch.object(discord.Client, "run", autospec=True) as run, stub_redis_ping():
+        bot.main()
+
+    run.assert_called_once_with(bot.client, FAKE_TOKEN)
+    assert bot.DEV_GUILD_ID == expected
+
+
+def test_main_exits_with_a_clear_message_when_dev_guild_id_is_not_a_number(monkeypatch):
+    monkeypatch.setenv("DYNO", "pytest")
+    monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
+    monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
+    monkeypatch.setenv("DEV_GUILD_ID", "my-test-server")
+    bot, _ = import_fresh_bot(monkeypatch)
+
+    with mock.patch.object(discord.Client, "run", autospec=True) as run, pytest.raises(SystemExit) as exited:
+        bot.main()
+
+    run.assert_not_called()
+    assert exited.value.code == "Cannot start: DEV_GUILD_ID must be a server ID, a number."
 
 
 def test_main_exits_with_a_clear_message_when_redis_does_not_answer(monkeypatch):
