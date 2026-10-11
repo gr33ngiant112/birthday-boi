@@ -20,8 +20,16 @@ COMMANDS = {"set_birthday", "get_birthday", "list_birthdays", "forecast_birthday
 @pytest.fixture
 def setup_hook(monkeypatch):
     """Return (run, sync, start). run(dev_guild_id, sync_commands) runs setup_hook() with the
-    settings main() would have set; sync is the faked CommandTree.sync, start the task's start()."""
-    sync = mock.AsyncMock(return_value=[])
+    settings main() would have set; sync is the faked CommandTree.sync, start the task's start().
+    sync.sent lists, for each sync, the names of the commands it would send to Discord: the tree's
+    commands for that guild (or the global ones) at the time of the call."""
+
+    def send(*, guild=None):
+        sync.sent.append({command.name for command in bot.client.tree.get_commands(guild=guild)})
+        return []
+
+    sync = mock.AsyncMock(side_effect=send)
+    sync.sent = []
     start = mock.Mock()
     monkeypatch.setattr(bot.client.tree, "sync", sync)
     monkeypatch.setattr(bot.check_upcoming_birthdays, "start", start)
@@ -66,6 +74,7 @@ def test_a_development_server_gets_every_command_and_nothing_is_synced_globally(
     run(dev_guild_id=DEV_GUILD_ID)
 
     assert [(call.args, call.kwargs["guild"].id) for call in sync.await_args_list] == [((), DEV_GUILD_ID)]
+    assert sync.sent == [COMMANDS]  # copied to the server before its sync, not after
     dev_guild = discord.Object(id=DEV_GUILD_ID)
     assert {command.name for command in bot.client.tree.get_commands(guild=dev_guild)} == COMMANDS
     start.assert_called_once_with()
