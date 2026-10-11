@@ -55,6 +55,18 @@ source venv/bin/activate
 
 4. Run `pip install -r requirements.txt -r requirements-dev.txt`, then `pre-commit install`. Before each commit, the hook runs ruff's syntax checks and the command registry test with this venv's ruff and pytest, so commit with the venv active.
 
+### Building and testing the Docker image
+
+The `Dockerfile` builds the bot's image. CI builds it and runs the lint and the tests inside it. To do the same locally:
+
+```bash
+docker build --tag birthday-boi .
+docker build --target test --tag birthday-boi:test .
+docker run --rm --network none birthday-boi:test
+```
+
+The first command builds the bot's image. The second builds the test image: the bot's image plus the dev tools and the tests. The third runs ruff's syntax checks and the tests in a container with no network, and exits with a non-zero status if either fails. `.dockerignore` keeps `.env` files out of the build context, so they never reach an image.
+
 ### Installing
 
 1. Register the bot as a discord app [here](https://discord.com/developers/applications). Remember to _save the token_.
