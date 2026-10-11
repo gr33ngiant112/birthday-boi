@@ -13,27 +13,30 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Wheels only, as CI installed them on the host. The dependencies come before bot.py, so a code
-# change reuses this layer.
+# The bot runs as this unprivileged user (uid 10001). /app and its files stay owned by root, so
+# the bot cannot change its own code.
+RUN useradd --uid 10001 --no-log-init bot
+
+# --only-binary :all: as in CI: no source distributions from PyPI. pip still builds spaCy's
+# English model from the release URL in requirements.txt. The dependencies come before bot.py,
+# so a code change reuses this layer.
 COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir --only-binary :all: -r requirements.txt
 
-# /app and its files stay owned by root, so the bot cannot change its own code.
-RUN useradd --uid 10001 --no-log-init bot
 COPY bot.py ./
-USER bot
+USER 10001
 CMD ["python", "bot.py"]
 
 # The tests run against the runtime stage's bot.py and packages. .github/scripts/ is here so the
 # lint covers every Python file CI linted on the host.
 FROM runtime AS test
-USER root
+USER 0
 COPY requirements-dev.txt ./
 RUN python -m pip install --no-cache-dir --only-binary :all: -r requirements-dev.txt
 COPY pytest.ini ./
 COPY tests/ tests/
 COPY .github/scripts/ .github/scripts/
-USER bot
+USER 10001
 # The bot user cannot write to /app, so ruff and pytest run without their caches.
 CMD ["sh", "-c", "ruff check --no-cache --select E9,F63,F7,F82 . && exec pytest -q -p no:cacheprovider"]
 
