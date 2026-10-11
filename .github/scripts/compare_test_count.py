@@ -10,7 +10,8 @@ pull request carries the tests-removed label, or when pytest cannot collect the 
 It also reports, without failing:
 - the tests collected at BASE that are not collected at HEAD;
 - the changed files under tests/, when the change touches other files too;
-- added and removed lines with pytest xfail or skip markers under tests/.
+- added and removed lines under tests/ that mention xfail (such as a helper like xfail_16), or use
+  pytest.mark.skip, pytest.mark.skipif or pytest.skip.
 
 The report goes to stdout and, when GITHUB_STEP_SUMMARY names a file, to that job summary.
 """
@@ -24,7 +25,9 @@ import tempfile
 
 LABEL = "tests-removed"
 TESTS_DIR = "tests/"
-MARKER = re.compile(r"\bpytest\.(?:mark\.)?(?:xfail|skip|skipif)\b")
+# Any mention of xfail, since tests here mark known bugs through helpers such as xfail_16(); for
+# skips only pytest's own forms, because "skip" is a common word in test names.
+MARKER = re.compile(r"xfail|\bpytest\.(?:mark\.)?skip(?:if)?\b")
 COLLECTED = re.compile(r"^(?:(\d+) tests? collected|no tests collected)\b")
 
 
@@ -76,7 +79,7 @@ def changed_files(base, head):
 
 
 def marker_changes(base, head):
-    """'path: +line' or 'path: -line' for each added or removed line under tests/ with an xfail or skip marker."""
+    """'path: +line' or 'path: -line' for each added or removed line under tests/ that MARKER matches."""
     changes, path = [], None
     for line in git("diff", "--unified=0", "--no-renames", base, head, "--", TESTS_DIR).splitlines():
         if line.startswith("--- "):
