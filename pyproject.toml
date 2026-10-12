@@ -33,3 +33,19 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.10",
 ]
+
+# ruff lints and formats every Python file here (#36). Its target Python version comes from
+# requires-python above.
+[tool.ruff]
+# 120, not ruff's default of 88: formatting this code at 88 gave a 1,323-line diff and left 149
+# lines too long; at 120, a 176-line diff and 2.
+line-length = 120
+
+[tool.ruff.lint]
+# #36's rules: pycodestyle (E, W), Pyflakes (F), flake8-bugbear (B), pyupgrade (UP), flake8-async
+# (ASYNC), naive dates and times (DTZ), blind `except Exception` (BLE) and flake8-simplify (SIM).
+select = ["E", "F", "W", "B", "UP", "ASYNC", "DTZ", "BLE", "SIM"]
+
+[tool.ruff.format]
+# LF, as .gitattributes stores every file, so `ruff format --check` also fails on a CRLF file.
+line-ending = "lf"
