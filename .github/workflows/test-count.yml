@@ -1,0 +1,73 @@
+name: Test count
+
+# Fails a pull request whose merge would leave fewer tests than its base branch has, unless the
+# pull request has the tests-removed label (#27). It is a workflow of its own because adding or
+# removing a label runs it again, and that should not run the whole CI.
+on:
+  pull_request:
+    # ready_for_review starts the check when a draft is marked ready; while a PR is a draft, the job is skipped.
+    # labeled and unlabeled run it again when the tests-removed label is added or removed. Any other
+    # label's run skips the job.
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read # the job reads the pull request's labels as they are when it runs
+
+concurrency:
+  # As in ci.yml, with a group of its own: a newer run for the same PR cancels the older one. A
+  # label other than tests-removed gets a group of its own, so adding one never cancels a count in
+  # progress: Dependabot labels each pull request as it opens it.
+  group: test-count-${{ github.event_name == 'pull_request' && github.ref || github.sha }}${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.label.name != 'tests-removed' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test-count:
+    name: Compare with the base branch
+    # Skipped while a PR is a draft, as in ci.yml, and when a label other than tests-removed is
+    # added or removed.
+    if: >-
+      github.event.pull_request.draft == false &&
+      (github.event.action != 'labeled' && github.event.action != 'unlabeled' ||
+      github.event.label.name == 'tests-removed')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # A pull_request run checks out GitHub's merge of the PR into its base branch. Its first
+      # parent, HEAD^1, is the base branch, so the comparison counts what merging would change.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2 # the merge commit and its parents
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # The Dockerfile's uv. Without a version, setup-uv installs the latest uv.
+          version: "0.12.23"
+      # uv.lock's packages, the dev group included, into .venv with Python 3.12 (.python-version),
+      # from wheels only.
+      - name: Install the locked dependencies (wheels only)
+        run: uv sync --locked --no-build
+      # The labels as they are now, not as the event recorded them, so that re-running a failed run
+      # after the owner adds tests-removed (`gh run rerun <run id> --failed`) sees the label.
+      - name: Read the pull request's labels
+        id: labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          labels=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.labels[].name')
+          if grep -qxF tests-removed <<<"$labels"; then
+            echo "tests-removed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tests-removed=false" >> "$GITHUB_OUTPUT"
+          fi
+      # The script collects the tests with the Python that runs it, so it runs with .venv's.
+      - name: Compare the test count with the base branch
+        env:
+          TESTS_REMOVED_LABEL: ${{ steps.labels.outputs.tests-removed }}
+        run: |
+          args=()
+          if [ "$TESTS_REMOVED_LABEL" = "true" ]; then
+            args+=(--tests-removed-label)
+          fi
+          .venv/bin/python .github/scripts/compare_test_count.py "${args[@]}" HEAD^1 HEAD

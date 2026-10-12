@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # ready_for_review starts CI when a draft is marked ready; while a PR is a draft, every job is skipped.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [develop]
 
@@ -9,33 +11,45 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # One group per PR, and one per commit pushed to develop. A new push to a PR cancels that
+  # PR's older run; develop push runs never wait for or cancel each other, because cancelled
+  # runs email the owner.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The three job names below are required status checks on develop and main. Renaming a job means
+# updating both branches' protection in the same change, a GitHub admin step (the owner's for main).
 jobs:
   build:
     name: Lint, test and build
+    # Skipped while a PR is a draft. On a push, github.event.pull_request is null and
+    # null == false is true (GitHub compares them as numbers), so pushes to develop run it.
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements*.txt
-      - name: Install dependencies (wheels only)
-        run: |
-          python -m pip install --only-binary :all: -r requirements.txt -r requirements-dev.txt
-      - name: Lint (syntax errors and undefined names)
-        run: ruff check --select E9,F63,F7,F82 .
-      - name: Test
-        run: pytest -q
+      # CI builds the bot's Docker image and runs the lint and the tests inside it (#35).
+      # docker build uses BuildKit here, and the test build reuses the first build's layers.
+      # The image installs uv.lock with `uv sync --locked`, so this step fails when uv.lock does
+      # not match pyproject.toml.
+      - name: Build the bot's image
+        run: docker build --tag birthday-boi .
+      # The test image also has the dev packages, and fakeredis brings in redis, so a runtime
+      # dependency missing from pyproject.toml could still pass the tests. Importing bot.py
+      # here checks the bot's image on its own.
+      - name: Import bot.py in the bot's image
+        run: docker run --rm --network none birthday-boi python bot.py --help
+      - name: Build the test image (the bot's image, the dev tools and the tests)
+        run: docker build --target test --tag birthday-boi:test .
+      - name: Lint and test in the test image
+        run: docker run --rm --network none birthday-boi:test
 
   secret-scan:
     name: Secret scan (gitleaks)
+    if: github.event.pull_request.draft == false # skipped while a PR is a draft, as above
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -61,33 +75,21 @@ jobs:
 
   dependency-scan:
     name: Dependency scan (osv-scanner)
+    if: github.event.pull_request.draft == false # skipped while a PR is a draft, as above
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements*.txt
-      - name: Install dependencies (wheels only)
-        run: |
-          python -m pip install --only-binary :all: -r requirements.txt -r requirements-dev.txt
-      # Scan the versions pip actually installed; requirements.txt leaves most of them unpinned.
-      # --all keeps setuptools (spaCy 3.5 needs it at runtime); pip is the installer, not a dependency.
-      - name: Freeze resolved dependencies
-        run: python -m pip freeze --all --exclude pip > pip-freeze.txt
-      - name: Scan resolved dependencies
-        # Report-only: becomes blocking (drop continue-on-error) once the lockfile work (#17/#21, Phase 3) lands.
-        continue-on-error: true
+      # uv.lock pins every package the image and the tests install, the dev tools included, so
+      # the scan reads it directly. Any known advisory fails the job, except those that
+      # osv-scanner.toml ignores, each with its reason and an expiry date.
+      - name: Scan uv.lock
         uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
         with:
-          # --no-resolve: the freeze is already the full set; resolving again adds packages
-          # that pip skipped on Python 3.11 because of environment markers.
           # --no-ignore: osv-scanner 2.6.0 skips files that match a .gitignore pattern, even when named.
           scan-args: |-
-            --lockfile=requirements.txt:pip-freeze.txt
-            --no-resolve
+            --lockfile=uv.lock
+            --config=osv-scanner.toml
             --no-ignore

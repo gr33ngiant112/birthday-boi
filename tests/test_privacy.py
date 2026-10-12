@@ -1,4 +1,8 @@
-"""#7, #8, #9 and #10: what the bot shows to whom, and whom it can ping."""
+"""#7, #8, #9 and #10: what the bot shows to whom, and whom it can ping.
+
+#9: the year is optional, and the year and age show only to members of a guild where the
+member shared the birthday, and only if the member opted in with show_age.
+"""
 
 import asyncio
 import datetime
@@ -14,14 +18,8 @@ GUILD_B = 300000000000007000
 ALICE = (200000000000001101, "alice-only-in-a")
 BOB = (200000000000001201, "bob-only-in-b")
 ASKER = (200000000000001401, "asker")
-ASKER_BIRTHDAY = datetime.date(1993, 7, 4)
-HOSTILE_ID = 200000000000001402
 CAROL = (200000000000001501, "carol-in-a")
 CAROL_BIRTHDAY = datetime.date(1990, 3, 15)
-DAVE = (200000000000001601, "dave-in-no-guild")
-DAVE_BIRTHDAY = datetime.date(1985, 11, 2)
-FIVE_MEMBERS = [(200000000000001701 + i, f"member-{i}-in-a") for i in range(5)]
-FIVE_BIRTHDAYS = [datetime.date(1980 + i, i + 1, 11 + i) for i in range(5)]
 SETTER = (200000000000001801, "setter-in-a-and-b")
 HOSTILE_ROLE_ID = 300000000000006500
 # Display names a member controls, with an @everyone ping, a role mention and code-block breakouts.
@@ -30,7 +28,7 @@ HOSTILE_MEMBERS = [
     (200000000000001902, f"<@&{HOSTILE_ROLE_ID}>"),
     (200000000000001903, "```@here```"),
 ]
-# On 2026-10-01 all three fall in the forecast (November, December) and in the monthly post.
+# On 2026-10-01 all three fall in /birthday upcoming's next 90 days and in the monthly post.
 HOSTILE_BIRTHDAYS = ["1990-11-03", "1991-11-24", "1992-12-15"]
 # Ages on the next birthday from 2026-10-01: 44, 52 and 67, none of which can be a day of the month.
 MONTHLY_MEMBERS = [
@@ -73,18 +71,6 @@ def assert_pings_nobody(payload):
     assert not allowed.get("replied_user")
 
 
-def ask_in_guild(gateway, guild, author, text, others=()):
-    """Send "@bot <text>" to on_message from author in the guild's #general, mentioning others too."""
-    message = gateway.message(
-        guild,
-        author,
-        f"<@{gateway.bot_user.id}> {text}",
-        mentions=[gateway.mention_bot(), *(gateway.mention(*user) for user in others)],
-    )
-    asyncio.run(bot.on_message(message))
-    return gateway.sent_to(message.channel)
-
-
 def run_command(gateway, guild, user, command, *args):
     """Run a slash command as user, a (user_id, name) member of guild; return the FakeInteraction."""
     interaction = gateway.interaction(guild, guild.get_member(user[0]))
@@ -113,28 +99,24 @@ def test_monthly_post_lists_only_members_of_that_guild(fake_redis, freeze_today,
     assert str(ALICE[0]) not in post_b
 
 
-@pytest.mark.parametrize("set_with", ["slash command", "chat"])
-def test_setting_a_birthday_shares_it_only_with_that_guild(set_with, fake_redis, freeze_today, gateway):
+def test_setting_a_birthday_shares_it_only_with_that_guild(fake_redis, freeze_today, gateway):
     freeze_today(datetime.date(2026, 9, 29))
     # SETTER and CAROL are members of both guilds; CAROL shared her birthday with guild B.
     guild_a = gateway.add_guild(GUILD_A, "Guild A", [SETTER, CAROL])
     guild_b = gateway.add_guild(GUILD_B, "Guild B", [SETTER, CAROL])
     fake_redis.seed_birthday(GUILD_B, CAROL[0], CAROL_BIRTHDAY.isoformat())
-    if set_with == "chat":
-        ask_in_guild(gateway, guild_a, SETTER, "my birthday is December 25 1990")
-    else:
-        run_command(gateway, guild_a, SETTER, "set_birthday", "12-25-1990")
+    run_command(gateway, guild_a, SETTER, "birthday_set", 12, 25, 1990)
 
-    list_a = text_of(run_command(gateway, guild_a, CAROL, "list_birthdays"))
-    list_b = text_of(run_command(gateway, guild_b, CAROL, "list_birthdays"))
+    list_a = text_of(run_command(gateway, guild_a, CAROL, "birthday_list"))
+    list_b = text_of(run_command(gateway, guild_b, CAROL, "birthday_list"))
 
     if f"<@{SETTER[0]}>" not in list_a or f"<@{CAROL[0]}>" not in list_b:
         pytest.fail(f"setup: each list should show the member who set a birthday there, got A={list_a!r} B={list_b!r}")
     assert str(SETTER[0]) not in list_b
-    assert "12-25-1990" not in list_b
+    assert "December 25" not in list_b
 
 
-def test_get_birthday_of_a_member_who_shared_it_only_with_another_guild_shows_no_date(
+def test_birthday_show_of_a_member_who_shared_it_only_with_another_guild_shows_no_date(
     fake_redis, freeze_today, gateway
 ):
     freeze_today(datetime.date(2026, 9, 29))
@@ -142,10 +124,10 @@ def test_get_birthday_of_a_member_who_shared_it_only_with_another_guild_shows_no
     guild_b = gateway.add_guild(GUILD_B, "Guild B", [ASKER, CAROL])
     fake_redis.seed_birthday(GUILD_A, CAROL[0], CAROL_BIRTHDAY.isoformat())
 
-    in_a = run_command(gateway, guild_a, ASKER, "get_birthday", guild_a.get_member(CAROL[0]))
-    in_b = run_command(gateway, guild_b, ASKER, "get_birthday", guild_b.get_member(CAROL[0]))
+    in_a = run_command(gateway, guild_a, ASKER, "birthday_show", guild_a.get_member(CAROL[0]))
+    in_b = run_command(gateway, guild_b, ASKER, "birthday_show", guild_b.get_member(CAROL[0]))
 
-    if CAROL_BIRTHDAY.strftime("%m-%d-%Y") not in text_of(in_a):
+    if CAROL_BIRTHDAY.strftime("%B %d") not in text_of(in_a):
         pytest.fail(f"setup: guild A's lookup should show the birthday, got {in_a.sent!r}")
     [(reply, _)] = in_b.sent
     assert "has not set their birthday" in reply
@@ -155,18 +137,18 @@ def test_get_birthday_of_a_member_who_shared_it_only_with_another_guild_shows_no
 def test_hostile_display_names_are_never_shown_and_ping_nobody(fake_redis, freeze_today, gateway):
     freeze_today(datetime.date(2026, 10, 1))  # the 1st, so the monthly task posts
     guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, *HOSTILE_MEMBERS])
-    for (user_id, _), birthday in zip(HOSTILE_MEMBERS, HOSTILE_BIRTHDAYS):
+    for (user_id, _), birthday in zip(HOSTILE_MEMBERS, HOSTILE_BIRTHDAYS, strict=True):
         fake_redis.seed_birthday(GUILD_A, user_id, birthday)
     all_ids = [user_id for user_id, _ in HOSTILE_MEMBERS]
 
     # (view, the members it should list, the request payloads it sent)
     views = [
-        ("list", all_ids, run_command(gateway, guild, ASKER, "list_birthdays").payloads),
-        ("forecast", all_ids, run_command(gateway, guild, ASKER, "forecast_birthdays").payloads),
+        ("list", all_ids, run_command(gateway, guild, ASKER, "birthday_list").payloads),
+        ("upcoming", all_ids, run_command(gateway, guild, ASKER, "birthday_upcoming", 90).payloads),
     ]
     for user_id in all_ids:
-        interaction = run_command(gateway, guild, ASKER, "get_birthday", guild.get_member(user_id))
-        views.append((f"get {user_id}", [user_id], interaction.payloads))
+        interaction = run_command(gateway, guild, ASKER, "birthday_show", guild.get_member(user_id))
+        views.append((f"show {user_id}", [user_id], interaction.payloads))
     asyncio.run(bot.check_upcoming_birthdays())
     views.append(("monthly post", all_ids, gateway.sent_to(gateway.general(guild))))
 
@@ -189,57 +171,14 @@ def test_monthly_post_shows_no_birth_year_or_age(fake_redis, freeze_today, gatew
     asyncio.run(bot.check_upcoming_birthdays())
 
     post = "\n".join(payload.get("content") or "" for payload in gateway.sent_to(gateway.general(guild)))
-    if not all(f"<@{user_id}>" in post and birthday.strftime("%B %d") in post for user_id, _, birthday in MONTHLY_MEMBERS):
+    if not all(
+        f"<@{user_id}>" in post and birthday.strftime("%B %d") in post for user_id, _, birthday in MONTHLY_MEMBERS
+    ):
         pytest.fail(f"setup: the post should list each member with the month and day, got {post!r}")
     for _, _, birthday in MONTHLY_MEMBERS:
         age = 2026 - birthday.year
         assert str(birthday.year) not in post
         assert re.search(rf"\b{age}\b", post) is None
-
-
-def test_reply_echoing_a_display_name_cannot_ping_everyone(fake_redis, gateway):
-    guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER])
-    bot_id = gateway.bot_user.id
-    message = gateway.message(
-        guild,
-        ASKER,
-        f"<@{bot_id}> when is <@{HOSTILE_ID}>'s birthday?",
-        mentions=[gateway.mention_bot(), gateway.mention(HOSTILE_ID, "mallory", nick="@everyone")],
-    )
-
-    asyncio.run(bot.on_message(message))
-
-    # The reply no longer echoes the display name (#8); the payload must still allow no pings.
-    replies = gateway.sent_to(message.channel)
-    if len(replies) != 1:
-        pytest.fail(f"setup: expected one reply, got {replies!r}")
-    # The request payload holds the client-wide allowed_mentions merged with the
-    # call's own arguments. Without the field, Discord parses every mention.
-    allowed = replies[0].get("allowed_mentions")
-    assert allowed is not None
-    assert "everyone" not in allowed.get("parse", [])
-    assert "roles" not in allowed.get("parse", [])
-    assert not allowed.get("roles")
-
-
-@pytest.mark.parametrize(
-    ("text", "others"),
-    [
-        pytest.param("my birthday is December 25 1990", [], id="set"),
-        pytest.param("my birthday is a secret", [], id="set, no date found"),
-        pytest.param("when is my birthday?", [], id="get"),
-        pytest.param(f"when is <@{CAROL[0]}>'s birthday?", [CAROL], id="get_other"),
-    ],
-)
-def test_chat_replies_ping_nobody(text, others, fake_redis, gateway):
-    guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, CAROL])
-    fake_redis.set(f"user:{CAROL[0]}:birthday", CAROL_BIRTHDAY.isoformat())
-
-    replies = ask_in_guild(gateway, guild, ASKER, text, others)
-
-    if len(replies) != 1:
-        pytest.fail(f"setup: expected one reply, got {replies!r}")
-    assert_pings_nobody(replies[0])
 
 
 def test_monthly_post_pings_nobody(fake_redis, freeze_today, gateway):
@@ -255,111 +194,15 @@ def test_monthly_post_pings_nobody(fake_redis, freeze_today, gateway):
     assert_pings_nobody(posts[0])
 
 
-def test_dm_asking_for_a_members_birthday_gets_no_reply(fake_redis, gateway):
-    gateway.add_guild(GUILD_A, "Guild A", [ASKER, CAROL])
-    fake_redis.set(f"user:{CAROL[0]}:birthday", CAROL_BIRTHDAY.isoformat())
-    message = gateway.dm_message(
-        ASKER,
-        f"<@{gateway.bot_user.id}> when is <@{CAROL[0]}>'s birthday?",
-        mentions=[gateway.mention_bot(member=False), gateway.mention(*CAROL, member=False)],
-    )
-
-    asyncio.run(bot.on_message(message))
-
-    assert gateway.sent == []
-
-
-@pytest.mark.parametrize("bot_mentioned", [False, True], ids=["bot not mentioned", "bot mentioned too"])
-def test_message_pinging_everyone_gets_no_reply(bot_mentioned, fake_redis, gateway):
-    guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, CAROL])
-    fake_redis.set(f"user:{CAROL[0]}:birthday", CAROL_BIRTHDAY.isoformat())
-    content = f"@everyone when is <@{CAROL[0]}>'s birthday?"
-    mentions = [gateway.mention(*CAROL)]
-    if bot_mentioned:
-        content = f"<@{gateway.bot_user.id}> {content}"
-        mentions.insert(0, gateway.mention_bot())
-    # Without the Message Content intent, Discord may deliver the first case with empty
-    # content (#8). The content is set so that the test checks the mention check itself.
-    message = gateway.message(guild, ASKER, content, mentions=mentions, mention_everyone=True)
-
-    asyncio.run(bot.on_message(message))
-
-    assert gateway.sent == []
-
-
-def test_message_not_mentioning_the_bot_gets_no_reply(fake_redis, gateway):
-    # Passes on develop too. It is the only test that fails if on_message stops
-    # requiring a direct mention of the bot. As above, the content is set even
-    # though Discord may deliver such a message without it.
-    guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, CAROL])
-    fake_redis.set(f"user:{CAROL[0]}:birthday", CAROL_BIRTHDAY.isoformat())
-    message = gateway.message(guild, ASKER, f"when is <@{CAROL[0]}>'s birthday?", mentions=[gateway.mention(*CAROL)])
-
-    asyncio.run(bot.on_message(message))
-
-    assert gateway.sent == []
-
-
-def test_asking_for_a_members_birthday_shows_no_date_or_name(fake_redis, gateway):
-    guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, CAROL])
-    fake_redis.seed_birthday(GUILD_A, CAROL[0], CAROL_BIRTHDAY.isoformat())
-
-    replies = ask_in_guild(gateway, guild, ASKER, f"when is <@{CAROL[0]}>'s birthday?", [CAROL])
-
-    assert len(replies) == 1
-    assert leaks(replies, CAROL_BIRTHDAY, CAROL[1]) == []
-
-
-def test_asking_for_a_non_members_birthday_shows_no_date(fake_redis, gateway):
-    guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER])
-    fake_redis.set(f"user:{DAVE[0]}:birthday", DAVE_BIRTHDAY.isoformat())
-    # DAVE is not in the guild, so his mention carries no member data.
-    message = gateway.message(
-        guild,
-        ASKER,
-        f"<@{gateway.bot_user.id}> when is <@{DAVE[0]}>'s birthday?",
-        mentions=[gateway.mention_bot(), gateway.mention(*DAVE, member=False)],
-    )
-
-    asyncio.run(bot.on_message(message))
-
-    replies = gateway.sent_to(message.channel)
-    assert len(replies) == 1
-    assert leaks(replies, DAVE_BIRTHDAY, DAVE[1]) == []
-
-
-def test_asking_for_five_birthdays_sends_at_most_one_reply_without_dates(fake_redis, gateway):
-    guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, *FIVE_MEMBERS])
-    for (user_id, _), birthday in zip(FIVE_MEMBERS, FIVE_BIRTHDAYS):
-        fake_redis.seed_birthday(GUILD_A, user_id, birthday.isoformat())
-    targets = " ".join(f"<@{user_id}>" for user_id, _ in FIVE_MEMBERS)
-
-    replies = ask_in_guild(gateway, guild, ASKER, f"when is the birthday of {targets}?", FIVE_MEMBERS)
-
-    assert len(replies) <= 1
-    for (_, name), birthday in zip(FIVE_MEMBERS, FIVE_BIRTHDAYS):
-        assert leaks(replies, birthday, name) == []
-
-
-def test_asking_for_your_own_birthday_shows_no_date(fake_redis, gateway):
-    guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER])
-    fake_redis.seed_birthday(GUILD_A, ASKER[0], ASKER_BIRTHDAY.isoformat())
-
-    replies = ask_in_guild(gateway, guild, ASKER, "when is my birthday?")
-
-    assert len(replies) == 1
-    assert leaks(replies, ASKER_BIRTHDAY, ASKER[1]) == []
-
-
 @pytest.mark.parametrize("upcoming", [True, False], ids=["a birthday upcoming", "none upcoming"])
-def test_forecast_birthdays_answers_only_the_caller(upcoming, fake_redis, freeze_today, gateway):
-    freeze_today(datetime.date(2026, 2, 5))  # the forecast covers March and April
+def test_birthday_upcoming_answers_only_the_caller(upcoming, fake_redis, freeze_today, gateway):
+    freeze_today(datetime.date(2026, 2, 5))  # the next 90 days run to May 6
     guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, CAROL])
     if upcoming:
         fake_redis.seed_birthday(GUILD_A, CAROL[0], CAROL_BIRTHDAY.isoformat())
     interaction = gateway.interaction(guild, guild.get_member(ASKER[0]))
 
-    asyncio.run(bot.forecast_birthdays.callback(interaction))
+    asyncio.run(bot.birthday_upcoming.callback(interaction, 90))
 
     sent = [content or "" for content, _ in interaction.sent]
     if len(sent) != 1 or (f"<@{CAROL[0]}>" in sent[0]) != upcoming:
@@ -367,3 +210,55 @@ def test_forecast_birthdays_answers_only_the_caller(upcoming, fake_redis, freeze
     assert interaction.deferred is not None
     assert interaction.deferred.get("ephemeral") is True
     assert [kwargs.get("ephemeral") for _, kwargs in interaction.sent] == [True]
+
+
+# (CAROL's stored birthday, her show_age opt-in, whether her year and age may show)
+OPT_IN_CASES = [
+    pytest.param(CAROL_BIRTHDAY.isoformat(), True, True, id="year, show_age"),
+    # Every birthday set before show_age existed is stored this way.
+    pytest.param(CAROL_BIRTHDAY.isoformat(), False, False, id="year, no show_age"),
+    pytest.param("--03-15", True, False, id="no year, show_age"),
+]
+
+
+@pytest.mark.parametrize("view", ["show", "list", "upcoming"])
+@pytest.mark.parametrize(("birthday", "show_age", "shown"), OPT_IN_CASES)
+def test_the_year_and_age_show_only_with_show_age_and_a_year(
+    view, birthday, show_age, shown, fake_redis, freeze_today, gateway
+):
+    # #9: show has the year and the age, list the year and upcoming the age, all only with the opt-in.
+    freeze_today(datetime.date(2026, 3, 1))  # Mar 15 2026 is a Sunday, 14 days away; CAROL turns 36
+    guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, CAROL])
+    fake_redis.seed_birthday(GUILD_A, CAROL[0], birthday, show_age=show_age)
+    args = (guild.get_member(CAROL[0]),) if view == "show" else ()
+
+    text = text_of(run_command(gateway, guild, ASKER, f"birthday_{view}", *args))
+
+    year = ", 1990" if shown else ""
+    next_birthday = "next birthday Sunday, March 15 2026"
+    expected = {
+        "show": f"🎂 **<@{CAROL[0]}>'s Birthday:**\nMarch 15{year} - {next_birthday}{', turning 36' if shown else ''}",
+        "list": f"🎉 **Server Birthdays:**\n<@{CAROL[0]}> - March 15{year} - {next_birthday}",
+        "upcoming": f"🎉 **Upcoming Birthdays:**\n<@{CAROL[0]}> - Sunday, March 15{' - turning 36' if shown else ''}",
+    }
+    assert text == expected[view]
+    if not shown:
+        assert "1990" not in text
+        assert "36" not in text
+
+
+def test_birthday_set_stores_show_age_and_deletes_it_when_off(fake_redis, freeze_today, gateway):
+    freeze_today(datetime.date(2026, 9, 29))
+    guild = gateway.add_guild(GUILD_A, "Guild A", [SETTER])
+    show_age_key = f"user:{SETTER[0]}:show_age"
+
+    with_opt_in = text_of(run_command(gateway, guild, SETTER, "birthday_set", 12, 25, 1990, True))
+    stored_with_opt_in = fake_redis.get(show_age_key)
+    without_opt_in = text_of(run_command(gateway, guild, SETTER, "birthday_set", 12, 25, 1990))
+
+    assert with_opt_in == (
+        "✅ Your birthday has been set to December 25, 1990. Others see the month and day, and your birth year and age."
+    )
+    assert stored_with_opt_in == "1"
+    assert without_opt_in == "✅ Your birthday has been set to December 25, 1990. Others see only the month and day."
+    assert fake_redis.get(show_age_key) is None

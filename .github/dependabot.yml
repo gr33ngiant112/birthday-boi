@@ -1,0 +1,63 @@
+# Weekly version updates. The minor and patch bumps of the Python packages come as one pull
+# request, and those of the actions as another. Dependabot security updates (on in the repository
+# settings) use the commit-message and versioning-strategy settings here. Pull requests target
+# develop, the default branch. A version update waits until a release is 7 days old (cooldown),
+# so a broken or hijacked release has time to be caught; security updates do not wait.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    # Update uv.lock only. The floors and pins in pyproject.toml stay where they are set by hand,
+    # with their reasons.
+    versioning-strategy: lockfile-only
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: ci
+      include: scope
+
+  # The Dockerfile's FROM lines: python:3.12-slim and uv's image, both pinned to their digests.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      # Python minor upgrades are made by hand, with pyproject.toml's requires-python and
+      # .python-version. New digests of python:3.12-slim, which bring Python 3.12 patch releases,
+      # still come.
+      - dependency-name: python
+        update-types: [version-update:semver-major, version-update:semver-minor]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  # compose.dev.yaml's Redis image, pinned to its digest.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+      include: scope

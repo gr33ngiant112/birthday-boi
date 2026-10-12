@@ -1,0 +1,52 @@
+# The bot is a script, not a package: with no [build-system] table, uv installs only the
+# dependencies below (a virtual project), never the project itself. uv.lock pins every package,
+# with the sha256 of each file. Install with `uv sync --locked`; after changing this file, run
+# `uv lock` and commit uv.lock with it.
+[project]
+name = "birthday-boi"
+# The release version, as CHANGELOG.md lists it (uv requires one).
+version = "0.1.0"
+# One Python minor version. Upgrades to the next one are made by hand: requires-python,
+# .python-version and the Dockerfile's python:3.12-slim name the same version.
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Floors: the versions in uv.lock when it was created, which the tests passed with.
+    "discord.py>=2.7.1",
+    "python-dotenv>=1.2.4",
+    "redis>=8.1.0",
+]
+
+[dependency-groups]
+# Lint, tests and the pre-commit hooks. `uv sync` installs this group unless given --no-dev.
+# Floors: the versions CI pinned before uv.lock, and the versions uv.lock has.
+dev = [
+    "fakeredis>=2.39.0",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
+
+# ruff lints and formats every Python file here (#36). Its target Python version comes from
+# requires-python above.
+[tool.ruff]
+# 120, not ruff's default of 88: formatting this code at 88 gave a 1,323-line diff and left 149
+# lines too long; at 120, a 176-line diff and 2.
+line-length = 120
+
+[tool.ruff.lint]
+# #36's rules: pycodestyle (E, W), Pyflakes (F), flake8-bugbear (B), pyupgrade (UP), flake8-async
+# (ASYNC), naive dates and times (DTZ), blind `except Exception` (BLE) and flake8-simplify (SIM);
+# and TID251, which bans the names listed below.
+select = ["E", "F", "W", "B", "UP", "ASYNC", "DTZ", "BLE", "SIM", "TID251"]
+
+# A rediss:// connection checks the server's certificate. Only REDIS_TLS_INSECURE=1 turns the check
+# off, on the line in bot.py marked `noqa: TID251` (#31); tests/test_redis.py checks both cases.
+# The ban sees these names, with or without `from ssl import`, not redis-py's string or number
+# forms (ssl_cert_reqs="none" or 0).
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"ssl.CERT_NONE".msg = "turns off TLS certificate checks; allowed only for bot.py's REDIS_TLS_INSECURE=1 opt-in (#31)"
+"ssl.VerifyMode.CERT_NONE".msg = "turns off TLS certificate checks; allowed only for bot.py's REDIS_TLS_INSECURE=1 opt-in (#31)"
+
+[tool.ruff.format]
+# LF, as .gitattributes stores every file, so `ruff format --check` also fails on a CRLF file.
+line-ending = "lf"

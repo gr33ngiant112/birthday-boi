@@ -1,0 +1,28 @@
+# Runs CI's lint and format check on the staged Python files before each commit (#36), and the
+# command registry test (#27). ruff reads its settings from pyproject.toml; `ruff format` fixes
+# what the format check finds. Set up with `pre-commit install` in the virtualenv that `uv sync`
+# creates (.venv), which has the bot's packages and the dev tools.
+#
+# language: unsupported (pre-commit's name for `system` since 4.4.0) runs each hook from the
+# active environment, so the hooks use the ruff and pytest that uv.lock pins and the bot's own
+# dependencies, which the registry test imports.
+minimum_pre_commit_version: "4.4.0"
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check
+        language: unsupported
+        types: [python]
+      - id: ruff-format
+        name: ruff format --check
+        entry: ruff format --check
+        language: unsupported
+        types: [python]
+      - id: registry-test
+        name: command registry test
+        entry: pytest -q tests/test_registry.py
+        language: unsupported
+        types: [python]
+        pass_filenames: false

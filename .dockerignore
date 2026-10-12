@@ -1,0 +1,27 @@
+# Kept out of the build context, so no COPY in the Dockerfile can put them in an image.
+
+# Secrets: the bot's tokens live in .env. ** matches at any depth, the top level included.
+**/.env
+**/.env.*
+
+# Git metadata, and other branches' worktrees (each may have its own .env).
+.git
+.worktrees
+
+# Local agent files, as in .gitignore (#26)
+CLAUDE.local.md
+.claude/settings.local.json
+.sisyphus
+
+# Virtualenvs
+.venv
+venv
+env
+ENV
+
+# Caches
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache

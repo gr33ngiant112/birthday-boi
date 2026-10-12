@@ -3,10 +3,12 @@
 Importing bot must not read .env, build the Redis client or start the Discord
 client; main(), which `python bot.py` runs, does all three. Client.run is patched
 or refused wherever bot.py is imported or run, so even a regression cannot log in
-to Discord. redis.asyncio.from_url only builds a client object, so nothing here
-needs a network, a Redis server or a real Discord token.
+to Discord. redis.asyncio.from_url only builds a client object, and the PING that
+main() sends Redis before it starts the client is stubbed or goes to fakeredis, so
+nothing here needs a network, a Redis server or a real Discord token.
 """
 
+import asyncio
 import importlib
 import os
 import pathlib
@@ -17,6 +19,8 @@ from unittest import mock
 
 import discord
 import dotenv
+import fakeredis
+import pytest
 import redis
 import redis.asyncio
 
@@ -49,6 +53,11 @@ def import_fresh_bot(monkeypatch):
             return importlib.import_module("bot"), run
         finally:
             sys.modules.pop("bot", None)
+
+
+def stub_redis_ping():
+    """A patch that answers main()'s startup PING without a connection."""
+    return mock.patch.object(redis.asyncio.Redis, "ping", new=mock.AsyncMock(return_value=True))
 
 
 def test_import_does_not_start_the_bot(monkeypatch):
@@ -84,6 +93,7 @@ def test_main_runs_client_with_token_from_env(monkeypatch):
     with (
         mock.patch.object(discord.Client, "run", autospec=True) as run,
         mock.patch.object(bot, "load_dotenv") as load_dotenv,
+        stub_redis_ping(),
     ):
         bot.main()
 
@@ -108,6 +118,7 @@ def test_main_loads_dotenv_before_reading_config(monkeypatch):
     with (
         mock.patch.object(discord.Client, "run", autospec=True) as run,
         mock.patch.object(bot, "load_dotenv", side_effect=fake_load_dotenv) as load_dotenv,
+        stub_redis_ping(),
     ):
         bot.main()
 
@@ -115,16 +126,210 @@ def test_main_loads_dotenv_before_reading_config(monkeypatch):
     run.assert_called_once_with(bot.client, FAKE_TOKEN)
 
 
-def test_running_bot_py_as_a_script_calls_main(monkeypatch):
-    # The Procfile starts the bot with `python bot.py`.
+def run_bot_py(monkeypatch, *flags):
+    """Run bot.py as `python bot.py FLAGS...` does, with the startup PING stubbed.
+
+    The caller patches Client.run. Returns the script's globals.
+    """
     monkeypatch.setenv("DYNO", "pytest")
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
+    monkeypatch.delenv("DEV_GUILD_ID", raising=False)
+    monkeypatch.setattr(sys, "argv", [str(REPO_ROOT / "bot.py"), *flags])
 
+    with stub_redis_ping():
+        return runpy.run_path(str(REPO_ROOT / "bot.py"), run_name="__main__")
+
+
+def test_running_bot_py_as_a_script_calls_main(monkeypatch):
+    # The Procfile starts the bot with `python bot.py`, which syncs no commands (#28).
     with mock.patch.object(discord.Client, "run", autospec=True) as run:
-        namespace = runpy.run_path(str(REPO_ROOT / "bot.py"), run_name="__main__")
+        namespace = run_bot_py(monkeypatch)
 
     run.assert_called_once_with(namespace["client"], FAKE_TOKEN)
+    assert namespace["SYNC_COMMANDS"] is False
+
+
+def test_bot_py_sync_turns_on_the_global_sync(monkeypatch):
+    with mock.patch.object(discord.Client, "run", autospec=True) as run:
+        namespace = run_bot_py(monkeypatch, "--sync")
+
+    run.assert_called_once_with(namespace["client"], FAKE_TOKEN)
+    assert namespace["SYNC_COMMANDS"] is True
+
+
+def test_an_unknown_flag_stops_bot_py_before_it_logs_in(monkeypatch, capsys):
+    with mock.patch.object(discord.Client, "run", autospec=True) as run, pytest.raises(SystemExit) as exited:
+        run_bot_py(monkeypatch, "--snyc")
+
+    run.assert_not_called()
+    assert exited.value.code == 2  # argparse's usage error
+    assert "unrecognized arguments: --snyc" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("value", "expected"), [(None, None), ("", None), ("300000000000019000", 300000000000019000)])
+def test_main_reads_the_development_server_from_dev_guild_id(monkeypatch, value, expected):
+    monkeypatch.setenv("DYNO", "pytest")
+    monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
+    monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
+    if value is None:
+        monkeypatch.delenv("DEV_GUILD_ID", raising=False)
+    else:
+        monkeypatch.setenv("DEV_GUILD_ID", value)
+    bot, _ = import_fresh_bot(monkeypatch)
+
+    with mock.patch.object(discord.Client, "run", autospec=True) as run, stub_redis_ping():
+        bot.main()
+
+    run.assert_called_once_with(bot.client, FAKE_TOKEN)
+    assert expected == bot.DEV_GUILD_ID
+
+
+def test_main_exits_with_a_clear_message_when_dev_guild_id_is_not_a_number(monkeypatch):
+    monkeypatch.setenv("DYNO", "pytest")
+    monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
+    monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
+    monkeypatch.setenv("DEV_GUILD_ID", "my-test-server")
+    bot, _ = import_fresh_bot(monkeypatch)
+
+    with mock.patch.object(discord.Client, "run", autospec=True) as run, pytest.raises(SystemExit) as exited:
+        bot.main()
+
+    run.assert_not_called()
+    assert exited.value.code == "Cannot start: DEV_GUILD_ID must be a server ID, a number."
+
+
+def exit_line_for_missing(names):
+    """The line main() exits with when the variables called names are missing or empty."""
+    return f"Cannot start: {names} must be set, in .env or in the environment (see .env.example)."
+
+
+@pytest.mark.parametrize(
+    ("env", "named"),
+    [
+        pytest.param({"REDIS_URL": LOCAL_REDIS_URL}, "DISCORD_TOKEN", id="DISCORD_TOKEN unset"),
+        pytest.param({"DISCORD_TOKEN": "", "REDIS_URL": LOCAL_REDIS_URL}, "DISCORD_TOKEN", id="DISCORD_TOKEN empty"),
+        pytest.param({"DISCORD_TOKEN": FAKE_TOKEN}, "REDIS_URL", id="REDIS_URL unset"),
+        pytest.param({"DISCORD_TOKEN": FAKE_TOKEN, "REDIS_URL": ""}, "REDIS_URL", id="REDIS_URL empty"),
+        pytest.param({}, "DISCORD_TOKEN and REDIS_URL", id="both unset"),
+    ],
+)
+def test_main_names_each_missing_variable_and_stops_before_redis_and_discord(monkeypatch, env, named):
+    # #18: a missing REDIS_URL used to crash inside redis-py with a traceback, and an empty
+    # DISCORD_TOKEN reached Redis and then client.run(). With DYNO set, main() reads the
+    # environment only and never loads .env.
+    monkeypatch.setenv("DYNO", "pytest")
+    for name in ("DISCORD_TOKEN", "REDIS_URL", "DEV_GUILD_ID"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    bot, _ = import_fresh_bot(monkeypatch)
+
+    with (
+        mock.patch.object(discord.Client, "run", autospec=True) as run,
+        mock.patch.object(redis.asyncio, "from_url") as from_url,
+        pytest.raises(SystemExit) as exited,
+    ):
+        bot.main()
+
+    assert exited.value.code == exit_line_for_missing(named)
+    # No Redis client was built, so nothing reached Redis, and nothing reached Discord.
+    from_url.assert_not_called()
+    assert bot.redis_client is None
+    run.assert_not_called()
+
+
+def test_a_env_copied_from_the_example_stops_at_the_empty_token(monkeypatch):
+    # Without DYNO, main() loads .env first. `cp .env.example .env` gives DISCORD_TOKEN= until
+    # the token is filled in, and an empty value counts as missing.
+    monkeypatch.delenv("DYNO", raising=False)
+    for name in ("DISCORD_TOKEN", "REDIS_URL", "DEV_GUILD_ID"):
+        monkeypatch.delenv(name, raising=False)
+    bot, _ = import_fresh_bot(monkeypatch)
+
+    def load_a_copy_of_the_example():
+        # Stands in for load_dotenv() on that .env, with .env.example's values; no real .env is read.
+        monkeypatch.setenv("DISCORD_TOKEN", "")
+        monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+        monkeypatch.setenv("DEV_GUILD_ID", "")
+
+    with (
+        mock.patch.object(discord.Client, "run", autospec=True) as run,
+        mock.patch.object(bot, "load_dotenv", side_effect=load_a_copy_of_the_example) as load_dotenv,
+        mock.patch.object(redis.asyncio, "from_url") as from_url,
+        pytest.raises(SystemExit) as exited,
+    ):
+        bot.main()
+
+    load_dotenv.assert_called_once_with()
+    assert exited.value.code == exit_line_for_missing("DISCORD_TOKEN")
+    from_url.assert_not_called()
+    assert bot.redis_client is None
+    run.assert_not_called()
+
+
+def test_main_exits_with_a_clear_message_when_redis_does_not_answer(monkeypatch):
+    # #15: the bot used to start anyway, and then every save failed and every read said
+    # that nothing was stored.
+    monkeypatch.setenv("DYNO", "pytest")
+    monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
+    monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
+    bot, _ = import_fresh_bot(monkeypatch)
+    server = fakeredis.FakeServer()
+    server.connected = False  # every command raises redis.ConnectionError
+    monkeypatch.setattr(bot, "create_redis_client", lambda: fakeredis.FakeAsyncRedis(server=server))
+
+    with mock.patch.object(discord.Client, "run", autospec=True) as run, pytest.raises(SystemExit) as exited:
+        bot.main()
+
+    run.assert_not_called()
+    # A string exit code is printed to stderr, and the process exits with status 1.
+    assert exited.value.code == (
+        "Cannot start: Redis did not answer a PING. Check REDIS_URL and that Redis is running. "
+        "ConnectionError: FakeRedis is emulating a connection error."
+    )
+
+
+def test_main_pings_redis_with_a_client_of_its_own(monkeypatch):
+    # redis.asyncio connections belong to the event loop that opened them, and client.run()
+    # starts a new loop for the bot. A PING through the bot's own client would leave that
+    # client a connection on the closed startup loop, and its first command in the bot's
+    # loop would raise "RuntimeError: Event loop is closed". fakeredis connections work in
+    # any loop, so this checks the cause: when client.run() is called, the PING has been
+    # sent, not through the bot's client, and its connection is closed.
+    monkeypatch.setenv("DYNO", "pytest")
+    monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
+    monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
+    bot, _ = import_fresh_bot(monkeypatch)
+    server = fakeredis.FakeServer()
+    monkeypatch.setattr(
+        bot, "create_redis_client", lambda: fakeredis.FakeAsyncRedis(server=server, decode_responses=True)
+    )
+    taken = []  # (pool, connection) for each connection taken, in order
+    get_connection = redis.asyncio.ConnectionPool.get_connection
+
+    async def get_connection_noting_it(pool, *args, **kwargs):
+        connection = await get_connection(pool, *args, **kwargs)
+        taken.append((pool, connection))
+        return connection
+
+    monkeypatch.setattr(redis.asyncio.ConnectionPool, "get_connection", get_connection_noting_it)
+    at_run = {}
+
+    def run(client, token):
+        at_run["pools"] = [pool for pool, _ in taken]
+        at_run["still connected"] = [connection.is_connected for _, connection in taken]
+        # The bot's first Redis command, in a new event loop as client.run() would start.
+        at_run["ping from the bot's loop"] = asyncio.run(bot.redis_client.ping())
+
+    with mock.patch.object(discord.Client, "run", autospec=True, side_effect=run) as client_run:
+        bot.main()
+
+    client_run.assert_called_once_with(bot.client, FAKE_TOKEN)
+    assert len(at_run["pools"]) == 1  # the startup PING
+    assert at_run["pools"][0] is not bot.redis_client.connection_pool
+    assert at_run["still connected"] == [False]
+    assert at_run["ping from the bot's loop"] is True
 
 
 def test_import_without_config_from_an_empty_directory(tmp_path):
@@ -145,3 +350,20 @@ def test_import_without_config_from_an_empty_directory(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert pathlib.Path(result.stdout.splitlines()[-1]) == REPO_ROOT / "bot.py"
+
+
+def test_import_loads_no_spacy(tmp_path):
+    # #24 and #30: importing bot loaded spaCy and its English model, which only the @mention date
+    # parser used; #30 measured 0.87 s more startup and peak memory up from 46 MB to 160 MB. Members
+    # now type dates as slash command options. A fresh interpreter, so no earlier import here counts.
+    script = IMPORT_BOT + "print(sorted(m for m in sys.modules if m.split('.')[0] in ('spacy', 'en_core_web_sm')))\n"
+    env = {k: v for k, v in os.environ.items() if k not in ("DISCORD_TOKEN", "REDIS_URL", "DYNO")}
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH")]))
+
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=300
+    )
+
+    if result.returncode != 0 or len(result.stdout.splitlines()) < 2:
+        pytest.fail(f"setup: importing bot should succeed and print the modules, got {result!r}")
+    assert result.stdout.splitlines()[-1] == "[]"
