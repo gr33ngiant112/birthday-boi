@@ -79,7 +79,7 @@ class FrozenClock:
     """A clock that reads the same moment, an aware datetime, until set() moves it.
 
     host_zone is the zone of the machine that runs the bot: date.today() and a naive
-    datetime.now() read the moment there. CI and Heroku run in UTC.
+    datetime.now() read the moment there. CI and the bot's image run in UTC.
     """
 
     def __init__(self, moment, host_zone=datetime.UTC):
