@@ -49,7 +49,8 @@ CMD ["python", "bot.py"]
 # here so the lint covers every Python file CI linted on the host.
 FROM runtime AS test
 USER 0
-# Adds pyproject.toml's dev group (ruff, pytest, fakeredis, pre-commit) to the same virtualenv.
+# Adds pyproject.toml's dev group (ruff, pytest, hypothesis, fakeredis, pre-commit) to the same
+# virtualenv.
 RUN --mount=from=uv,source=/uv,target=/bin/uv \
     uv sync --locked --no-build --group dev
 COPY pytest.ini ./
@@ -58,7 +59,9 @@ COPY .github/scripts/ .github/scripts/
 USER 10001
 # `ruff check`, then `ruff format --check`, which also fails on a CRLF file, then the tests; ruff
 # reads its settings from pyproject.toml. The bot user cannot write to /app, so ruff and pytest run
-# without their caches.
+# without their caches, and hypothesis keeps its example database in /tmp, which `docker run --rm`
+# discards; in /app it would warn and fall back to memory.
+ENV HYPOTHESIS_STORAGE_DIRECTORY=/tmp/hypothesis
 CMD ["sh", "-c", "ruff check --no-cache . && ruff format --no-cache --check . && exec pytest -q -p no:cacheprovider"]
 
 FROM runtime
