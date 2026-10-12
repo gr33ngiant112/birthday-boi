@@ -33,7 +33,7 @@ SYNC_COMMANDS = False
 def create_redis_client():
     tls_options = {}
     if urlparse(REDIS_URL).scheme == "rediss" and os.getenv("REDIS_TLS_INSECURE") == "1":
-        tls_options["ssl_cert_reqs"] = ssl.CERT_NONE
+        tls_options["ssl_cert_reqs"] = ssl.CERT_NONE  # noqa: TID251 - the REDIS_TLS_INSECURE=1 opt-in
     return redis.asyncio.from_url(
         REDIS_URL,
         decode_responses=True,  # Ensures Redis returns strings instead of bytes

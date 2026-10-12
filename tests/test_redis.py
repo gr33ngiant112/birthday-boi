@@ -62,4 +62,4 @@ def test_tls_url_skips_the_certificate_check_only_with_the_opt_out(monkeypatch):
 
     if not isinstance(connection, redis.asyncio.connection.SSLConnection):
         pytest.fail(f"setup: a rediss:// URL should build a TLS connection, got {type(connection).__name__}")
-    assert tls_settings(connection) == (ssl.CERT_NONE, False)
+    assert tls_settings(connection) == (ssl.CERT_NONE, False)  # noqa: TID251 - what the opt-in must set

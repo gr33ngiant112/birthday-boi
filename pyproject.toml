@@ -43,8 +43,17 @@ line-length = 120
 
 [tool.ruff.lint]
 # #36's rules: pycodestyle (E, W), Pyflakes (F), flake8-bugbear (B), pyupgrade (UP), flake8-async
-# (ASYNC), naive dates and times (DTZ), blind `except Exception` (BLE) and flake8-simplify (SIM).
-select = ["E", "F", "W", "B", "UP", "ASYNC", "DTZ", "BLE", "SIM"]
+# (ASYNC), naive dates and times (DTZ), blind `except Exception` (BLE) and flake8-simplify (SIM);
+# and TID251, which bans the names listed below.
+select = ["E", "F", "W", "B", "UP", "ASYNC", "DTZ", "BLE", "SIM", "TID251"]
+
+# A rediss:// connection checks the server's certificate. Only REDIS_TLS_INSECURE=1 turns the check
+# off, on the line in bot.py marked `noqa: TID251` (#31); tests/test_redis.py checks both cases.
+# The ban sees these names, with or without `from ssl import`, not redis-py's string or number
+# forms (ssl_cert_reqs="none" or 0).
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"ssl.CERT_NONE".msg = "turns off TLS certificate checks; allowed only for bot.py's REDIS_TLS_INSECURE=1 opt-in (#31)"
+"ssl.VerifyMode.CERT_NONE".msg = "turns off TLS certificate checks; allowed only for bot.py's REDIS_TLS_INSECURE=1 opt-in (#31)"
 
 [tool.ruff.format]
 # LF, as .gitattributes stores every file, so `ruff format --check` also fails on a CRLF file.
