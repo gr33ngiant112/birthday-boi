@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-12
+
+Daily birthday greetings, a Compose stack with a health check for running the bot on one host,
+and lists shown as embeds. After deploying, run `python bot.py --sync` once so Discord shows the new
+`/birthday config` command (README, "Updating the slash commands"; with Compose,
+"Deploying" step 4).
+
+### Added
+
+- `/birthday config` sets a server's daily birthday greetings: a channel, a time and an IANA time
+  zone, such as `Europe/Berlin`. Once a day, at that local time, the bot greets the members who
+  shared their birthday with that server, pinging only them and showing no year or age.
+  Greetings stay off until a server sets them, and `off` turns them off again. Only members with
+  Manage Server can change them (#67).
+- `compose.yaml` runs the bot and its own Redis on one host with `docker compose up -d --build`,
+  as the Compose project `birthday-boi-prod`. Redis publishes no port, and both restart unless
+  stopped. README's new "Deploying" section has the steps (#65).
+- The Docker image has a `HEALTHCHECK`: while connected to Discord, the bot touches a heartbeat
+  file every minute (`HEARTBEAT_FILE`, `/tmp/birthday-boi.heartbeat` by default), and
+  `python bot.py --healthcheck` fails once the file is 3 minutes old or missing (#65).
+
+### Changed
+
+- The bot reads a `.env` file whenever there is one, wherever it runs (Heroku's switch is gone),
+  and a variable already set in the environment still wins over `.env` (#65).
+- `/birthday list` and `/birthday upcoming` reply with embeds, one per message, each within
+  Discord's limits. Members appear as mentions that ping nobody, as before (#68).
+- A command that fails answers with a short error only the member who asked can see. The bot logs
+  one line naming the command, the server and the error type, never a birth date (#68).
+- The bot logs through Python's logging, in discord.py's format, instead of printing (#68).
+
+### Removed
+
+- Heroku's Procfile, and the `DYNO` switch that skipped `.env` on Heroku (#65).
+
 ## [0.1.0] - 2026-10-12
 
 The first release. It replaces the Heroku-era bot with one that keeps each server's birthdays to
@@ -67,5 +102,6 @@ that server, asks before showing anyone's birth year or age, and runs from a Doc
 - Dropping spaCy removed setuptools and its advisory (GHSA-h35f-9h28-mq5c) from the dependencies
   (#62).
 
-[Unreleased]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gr33ngiant112/birthday-boi/releases/tag/v0.1.0
