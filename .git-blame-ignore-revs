@@ -1,0 +1,10 @@
+# Commits that only reformat, which blame skips to show the commit that last changed each line.
+# GitHub's blame view reads this file. For `git blame`, run once:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# Every line of bot.py also changed line endings in c23d44e (with real changes, so it is not
+# listed) and back in b6df746. `git blame -w` sees past both.
+
+# chore: normalize line endings to LF (bot.py from CRLF to LF, every line)
+1a52891f961dd59ca261def353492dbde166c288
+# style: apply ruff format
+164fa097149aa714b4be7eac64aab87d6c9f4912

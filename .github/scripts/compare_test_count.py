@@ -77,7 +77,8 @@ def changed_files(base, head):
     """(status, path) of each file the change adds, modifies or deletes; a rename is a delete and an add."""
     # -z: NUL-separated status and path, with no quoting of unusual file names.
     fields = git("diff", "--name-status", "--no-renames", "-z", base, head).split("\0")
-    return list(zip(fields[0::2], fields[1::2]))
+    # The output ends with a NUL, so the last field is an empty string: strict=False drops it.
+    return list(zip(fields[0::2], fields[1::2], strict=False))
 
 
 def marker_changes(base, head):

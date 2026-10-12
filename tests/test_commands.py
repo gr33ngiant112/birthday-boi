@@ -28,7 +28,10 @@ def test_slash_commands_are_not_offered_in_dms():
     tree = bot.client.tree
     # The payloads tree.sync() sends to Discord.
     payloads = {command.name: command.to_dict(tree) for command in tree.get_commands()}
-    if not {"set_birthday", "get_birthday", "list_birthdays", "forecast_birthdays", "forget_birthday"} <= payloads.keys():
+    if (
+        not {"set_birthday", "get_birthday", "list_birthdays", "forecast_birthdays", "forget_birthday"}
+        <= payloads.keys()
+    ):
         pytest.fail(f"setup: expected the five slash commands, got {sorted(payloads)}")
     assert [name for name, payload in payloads.items() if offered_in_dms(payload)] == []
 

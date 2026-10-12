@@ -2,7 +2,8 @@
 #   uv       uv's own image. Its /uv binary is mounted only while packages install, so uv is not in
 #            the bot's image.
 #   runtime  the bot's image: the packages uv.lock pins and bot.py, run as an unprivileged user.
-#   test     runtime plus the dev tools and the tests; `docker run` lints and runs the tests.
+#   test     runtime plus the dev tools and the tests; `docker run` lints, checks the format and
+#            runs the tests.
 #   (last)   runtime again, so a plain `docker build .` builds the bot's image, not the test image.
 # The README's "Building and testing the Docker image" has the commands.
 
@@ -54,7 +55,9 @@ COPY pytest.ini ./
 COPY tests/ tests/
 COPY .github/scripts/ .github/scripts/
 USER 10001
-# The bot user cannot write to /app, so ruff and pytest run without their caches.
-CMD ["sh", "-c", "ruff check --no-cache --select E9,F63,F7,F82 . && exec pytest -q -p no:cacheprovider"]
+# `ruff check`, then `ruff format --check`, which also fails on a CRLF file, then the tests; ruff
+# reads its settings from pyproject.toml. The bot user cannot write to /app, so ruff and pytest run
+# without their caches.
+CMD ["sh", "-c", "ruff check --no-cache . && ruff format --no-cache --check . && exec pytest -q -p no:cacheprovider"]
 
 FROM runtime

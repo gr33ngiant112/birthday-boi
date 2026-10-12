@@ -38,7 +38,7 @@ BOT_ID = 100000000000000001
 BOT_NAME = "Birthday Boi"
 TIMESTAMP = "2026-01-01T00:00:00+00:00"
 # When the monthly post goes out on the 1st (#14). bot.py has no timezone setting, so UTC.
-POST_TIME = datetime.time(15, 0, tzinfo=datetime.timezone.utc)
+POST_TIME = datetime.time(15, 0, tzinfo=datetime.UTC)
 
 
 class FakeStore(fakeredis.FakeRedis):
@@ -79,7 +79,7 @@ class FrozenClock:
     datetime.now() read the moment there. CI and Heroku run in UTC.
     """
 
-    def __init__(self, moment, host_zone=datetime.timezone.utc):
+    def __init__(self, moment, host_zone=datetime.UTC):
         self.moment = moment
         self.host_zone = host_zone
 
@@ -135,7 +135,7 @@ def freeze_now(monkeypatch):
     sleeps until then. Only the datetime name inside those modules is replaced.
     """
 
-    def freeze(moment, host_zone=datetime.timezone.utc):
+    def freeze(moment, host_zone=datetime.UTC):
         clock = FrozenClock(moment, host_zone)
         frozen = frozen_datetime_module(clock)
         for module in (bot, discord.ext.tasks, discord.utils):

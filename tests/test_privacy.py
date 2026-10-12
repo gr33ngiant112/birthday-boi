@@ -155,7 +155,7 @@ def test_get_birthday_of_a_member_who_shared_it_only_with_another_guild_shows_no
 def test_hostile_display_names_are_never_shown_and_ping_nobody(fake_redis, freeze_today, gateway):
     freeze_today(datetime.date(2026, 10, 1))  # the 1st, so the monthly task posts
     guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, *HOSTILE_MEMBERS])
-    for (user_id, _), birthday in zip(HOSTILE_MEMBERS, HOSTILE_BIRTHDAYS):
+    for (user_id, _), birthday in zip(HOSTILE_MEMBERS, HOSTILE_BIRTHDAYS, strict=True):
         fake_redis.seed_birthday(GUILD_A, user_id, birthday)
     all_ids = [user_id for user_id, _ in HOSTILE_MEMBERS]
 
@@ -189,7 +189,9 @@ def test_monthly_post_shows_no_birth_year_or_age(fake_redis, freeze_today, gatew
     asyncio.run(bot.check_upcoming_birthdays())
 
     post = "\n".join(payload.get("content") or "" for payload in gateway.sent_to(gateway.general(guild)))
-    if not all(f"<@{user_id}>" in post and birthday.strftime("%B %d") in post for user_id, _, birthday in MONTHLY_MEMBERS):
+    if not all(
+        f"<@{user_id}>" in post and birthday.strftime("%B %d") in post for user_id, _, birthday in MONTHLY_MEMBERS
+    ):
         pytest.fail(f"setup: the post should list each member with the month and day, got {post!r}")
     for _, _, birthday in MONTHLY_MEMBERS:
         age = 2026 - birthday.year
@@ -330,14 +332,14 @@ def test_asking_for_a_non_members_birthday_shows_no_date(fake_redis, gateway):
 
 def test_asking_for_five_birthdays_sends_at_most_one_reply_without_dates(fake_redis, gateway):
     guild = gateway.add_guild(GUILD_A, "Guild A", [ASKER, *FIVE_MEMBERS])
-    for (user_id, _), birthday in zip(FIVE_MEMBERS, FIVE_BIRTHDAYS):
+    for (user_id, _), birthday in zip(FIVE_MEMBERS, FIVE_BIRTHDAYS, strict=True):
         fake_redis.seed_birthday(GUILD_A, user_id, birthday.isoformat())
     targets = " ".join(f"<@{user_id}>" for user_id, _ in FIVE_MEMBERS)
 
     replies = ask_in_guild(gateway, guild, ASKER, f"when is the birthday of {targets}?", FIVE_MEMBERS)
 
     assert len(replies) <= 1
-    for (_, name), birthday in zip(FIVE_MEMBERS, FIVE_BIRTHDAYS):
+    for (_, name), birthday in zip(FIVE_MEMBERS, FIVE_BIRTHDAYS, strict=True):
         assert leaks(replies, birthday, name) == []
 
 

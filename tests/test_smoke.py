@@ -182,7 +182,7 @@ def test_main_reads_the_development_server_from_dev_guild_id(monkeypatch, value,
         bot.main()
 
     run.assert_called_once_with(bot.client, FAKE_TOKEN)
-    assert bot.DEV_GUILD_ID == expected
+    assert expected == bot.DEV_GUILD_ID
 
 
 def test_main_exits_with_a_clear_message_when_dev_guild_id_is_not_a_number(monkeypatch):
@@ -233,7 +233,9 @@ def test_main_pings_redis_with_a_client_of_its_own(monkeypatch):
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
     bot, _ = import_fresh_bot(monkeypatch)
     server = fakeredis.FakeServer()
-    monkeypatch.setattr(bot, "create_redis_client", lambda: fakeredis.FakeAsyncRedis(server=server, decode_responses=True))
+    monkeypatch.setattr(
+        bot, "create_redis_client", lambda: fakeredis.FakeAsyncRedis(server=server, decode_responses=True)
+    )
     taken = []  # (pool, connection) for each connection taken, in order
     get_connection = redis.asyncio.ConnectionPool.get_connection
 

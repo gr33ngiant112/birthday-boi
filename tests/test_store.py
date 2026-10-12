@@ -9,7 +9,10 @@ AllowedMentions.none(), pings nobody.
 
 import asyncio
 import datetime
+from unittest import mock
 
+import discord
+import fakeredis
 import pytest
 import redis.asyncio
 
@@ -39,7 +42,7 @@ def run_view(view, gateway, guild, asker):
 def test_view_lists_members_the_bot_has_not_cached(view, fake_redis, freeze_today, gateway):
     freeze_today(datetime.date(2026, 10, 1))  # the 1st, so the monthly task posts
     guild = gateway.add_guild(GUILD_ID, "Guild", [ASKER], uncached=UNCACHED)
-    for (user_id, _), birthday in zip(UNCACHED, UNCACHED_BIRTHDAYS):
+    for (user_id, _), birthday in zip(UNCACHED, UNCACHED_BIRTHDAYS, strict=True):
         fake_redis.seed_birthday(GUILD_ID, user_id, birthday)
     if any(guild.get_member(user_id) for user_id, _ in UNCACHED):
         pytest.fail("setup: these members should not be in the member cache")
@@ -79,7 +82,9 @@ def test_monthly_task_skips_a_guild_with_no_stored_birthdays(fake_redis, freeze_
 
     asyncio.run(bot.check_upcoming_birthdays())
 
-    if f"<@{MEMBER[0]}>" not in "".join(payload.get("content") or "" for payload in gateway.sent_to(gateway.general(other))):
+    if f"<@{MEMBER[0]}>" not in "".join(
+        payload.get("content") or "" for payload in gateway.sent_to(gateway.general(other))
+    ):
         pytest.fail(f"setup: the other guild's post should list its member, got {gateway.sent!r}")
     assert gateway.sent_to(gateway.general(empty)) == []
 
@@ -134,4 +139,73 @@ def test_no_view_reads_with_keys_or_scan(fake_redis, freeze_today, gateway, monk
     left = {key: value for key, value in fake_redis.contents().items() if not key.startswith("announce:")}
     if left:
         pytest.fail(f"setup: forgetting and leaving should delete every other key, got {left!r}")
+    assert refused == []
+
+
+def refuse_keys_and_scan(monkeypatch):
+    """Make keys(), scan() and scan_iter() raise on every redis.asyncio client, as
+    test_no_view_reads_with_keys_or_scan does: on the client class, so that pipelines and
+    fakeredis clients refuse them too. Returns the names called, so that a call whose error
+    an `except Exception` swallows still fails the test."""
+    refused = []
+
+    def refuse(name):
+        def call(*args, **kwargs):
+            refused.append(name)
+            raise AssertionError(f"{name}() walks every key in the database")
+
+        return call
+
+    for name in ("keys", "scan", "scan_iter"):
+        monkeypatch.setattr(redis.asyncio.Redis, name, refuse(name))
+    return refused
+
+
+def test_the_startup_ping_does_not_use_keys_or_scan(fake_redis, monkeypatch):
+    # main() sends Redis a PING through a client of its own before it logs in (#15). With DYNO
+    # set, main() reads its config from the environment and never loads .env.
+    monkeypatch.setenv("DYNO", "pytest")
+    monkeypatch.setenv("DISCORD_TOKEN", "not-a-real-token")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.delenv("DEV_GUILD_ID", raising=False)
+    # main() sets these module globals; monkeypatch puts them back afterwards.
+    for name in ("TOKEN", "REDIS_URL", "DEV_GUILD_ID", "SYNC_COMMANDS", "redis_client"):
+        monkeypatch.setattr(bot, name, getattr(bot, name))
+    server = fake_redis.connection_pool.connection_kwargs["server"]
+    monkeypatch.setattr(
+        bot, "create_redis_client", lambda: fakeredis.FakeAsyncRedis(server=server, decode_responses=True)
+    )
+    pings = []
+    ping = redis.asyncio.Redis.ping
+
+    def noted_ping(client, **kwargs):
+        pings.append(client)
+        return ping(client, **kwargs)
+
+    monkeypatch.setattr(redis.asyncio.Redis, "ping", noted_ping)
+    refused = refuse_keys_and_scan(monkeypatch)
+
+    with mock.patch.object(discord.Client, "run", autospec=True) as run:
+        bot.main()
+
+    if not pings or not run.called:
+        pytest.fail(f"setup: main() should PING Redis, then start the client; {len(pings)} PINGs, run {run.called}")
+    assert refused == []
+
+
+def test_the_monthly_post_at_startup_does_not_use_keys_or_scan(fake_redis, freeze_now, gateway, monkeypatch):
+    # A bot that becomes ready after 15:00 UTC on the 1st posts the month's list at once (#14).
+    freeze_now(datetime.datetime(2026, 10, 1, 15, 1, tzinfo=datetime.UTC))
+    guild = gateway.add_guild(GUILD_ID, "Guild", [ASKER, MEMBER])
+    fake_redis.seed_birthday(GUILD_ID, MEMBER[0], "1990-11-03")
+    ready = asyncio.Event()
+    ready.set()  # as READY sets it, so wait_until_ready() returns at once
+    monkeypatch.setattr(bot.client, "_ready", ready)
+    refused = refuse_keys_and_scan(monkeypatch)
+
+    asyncio.run(bot.before_check_upcoming_birthdays())
+
+    post = "\n".join(payload.get("content") or "" for payload in gateway.sent_to(gateway.general(guild)))
+    if f"<@{MEMBER[0]}>" not in post:
+        pytest.fail(f"setup: the startup run should post the month's list, got {gateway.sent!r}")
     assert refused == []
