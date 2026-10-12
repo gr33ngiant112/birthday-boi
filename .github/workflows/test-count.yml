@@ -30,14 +30,15 @@ jobs:
         with:
           fetch-depth: 2 # the merge commit and its parents
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: requirements*.txt
-      - name: Install dependencies (wheels only)
-        run: |
-          python -m pip install --only-binary :all: -r requirements.txt -r requirements-dev.txt
+          # The Dockerfile's uv. Without a version, setup-uv installs the latest uv.
+          version: "0.12.23"
+      # uv.lock's packages, the dev group included, into .venv with Python 3.11 (.python-version),
+      # from wheels only.
+      - name: Install the locked dependencies (wheels only)
+        run: uv sync --locked --no-build
+      # The script collects the tests with the Python that runs it, so it runs with .venv's.
       - name: Compare the test count with the base branch
         env:
           TESTS_REMOVED_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'tests-removed') }}
@@ -46,4 +47,4 @@ jobs:
           if [ "$TESTS_REMOVED_LABEL" = "true" ]; then
             args+=(--tests-removed-label)
           fi
-          python .github/scripts/compare_test_count.py "${args[@]}" HEAD^1 HEAD
+          .venv/bin/python .github/scripts/compare_test_count.py "${args[@]}" HEAD^1 HEAD
