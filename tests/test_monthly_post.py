@@ -26,7 +26,7 @@ import redis
 
 import bot
 
-UTC = datetime.timezone.utc
+UTC = datetime.UTC
 # At 15:00 UTC a host at UTC+10 is already on the next day.
 UTC_PLUS_10 = datetime.timezone(datetime.timedelta(hours=10))
 GUILD_A = 300000000000017000

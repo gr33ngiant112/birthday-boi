@@ -182,7 +182,7 @@ def test_main_reads_the_development_server_from_dev_guild_id(monkeypatch, value,
         bot.main()
 
     run.assert_called_once_with(bot.client, FAKE_TOKEN)
-    assert bot.DEV_GUILD_ID == expected
+    assert expected == bot.DEV_GUILD_ID
 
 
 def test_main_exits_with_a_clear_message_when_dev_guild_id_is_not_a_number(monkeypatch):

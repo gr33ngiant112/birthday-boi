@@ -2,7 +2,7 @@ import argparse
 import os
 import redis.asyncio
 import ssl
-from discord.ext import commands, tasks
+from discord.ext import tasks
 from discord import app_commands
 import discord
 from dotenv import load_dotenv
@@ -57,7 +57,7 @@ FORECAST_DAYS = 90
 MAX_AGE_YEARS = 120
 
 # The monthly post goes out at this time on the 1st. There is no timezone setting, so UTC.
-MONTHLY_POST_TIME = datetime.time(hour=15, tzinfo=datetime.timezone.utc)
+MONTHLY_POST_TIME = datetime.time(hour=15, tzinfo=datetime.UTC)
 
 # A guild's monthly post is marked in Redis for this long: past the end of its month.
 MONTHLY_POST_MARKER_TTL = datetime.timedelta(days=40)
@@ -197,7 +197,7 @@ def birth_date_error(birthday_date, today):
 @tasks.loop(time=MONTHLY_POST_TIME)
 async def check_upcoming_birthdays():
     # The date in UTC, the zone of MONTHLY_POST_TIME, whatever the host's zone is.
-    today = datetime.datetime.now(datetime.timezone.utc).date()
+    today = datetime.datetime.now(datetime.UTC).date()
     # Only run on the first day of the month.
     if today.day != 1:
         return
@@ -255,7 +255,7 @@ async def check_upcoming_birthdays():
 @check_upcoming_birthdays.before_loop
 async def before_check_upcoming_birthdays():
     await client.wait_until_ready()
-    if datetime.datetime.now(datetime.timezone.utc).timetz() > MONTHLY_POST_TIME:
+    if datetime.datetime.now(datetime.UTC).timetz() > MONTHLY_POST_TIME:
         try:
             await check_upcoming_birthdays()
         except Exception as e:
