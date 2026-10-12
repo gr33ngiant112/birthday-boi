@@ -625,6 +625,13 @@ def main(argv=()):
         TOKEN = os.getenv("DISCORD_TOKEN")
         REDIS_URL = os.getenv("REDIS_URL")
 
+    # Stop before anything is contacted. An empty value counts as missing: a .env copied from
+    # .env.example has DISCORD_TOKEN= until the token is filled in.
+    missing = [name for name, value in (("DISCORD_TOKEN", TOKEN), ("REDIS_URL", REDIS_URL)) if not value]
+    if missing:
+        names = " and ".join(missing)
+        sys.exit(f"Cannot start: {names} must be set, in .env or in the environment (see .env.example).")
+
     DEV_GUILD_ID = None
     if os.getenv("DEV_GUILD_ID"):
         try:

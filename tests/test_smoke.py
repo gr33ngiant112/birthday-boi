@@ -199,6 +199,75 @@ def test_main_exits_with_a_clear_message_when_dev_guild_id_is_not_a_number(monke
     assert exited.value.code == "Cannot start: DEV_GUILD_ID must be a server ID, a number."
 
 
+def exit_line_for_missing(names):
+    """The line main() exits with when the variables called names are missing or empty."""
+    return f"Cannot start: {names} must be set, in .env or in the environment (see .env.example)."
+
+
+@pytest.mark.parametrize(
+    ("env", "named"),
+    [
+        pytest.param({"REDIS_URL": LOCAL_REDIS_URL}, "DISCORD_TOKEN", id="DISCORD_TOKEN unset"),
+        pytest.param({"DISCORD_TOKEN": "", "REDIS_URL": LOCAL_REDIS_URL}, "DISCORD_TOKEN", id="DISCORD_TOKEN empty"),
+        pytest.param({"DISCORD_TOKEN": FAKE_TOKEN}, "REDIS_URL", id="REDIS_URL unset"),
+        pytest.param({"DISCORD_TOKEN": FAKE_TOKEN, "REDIS_URL": ""}, "REDIS_URL", id="REDIS_URL empty"),
+        pytest.param({}, "DISCORD_TOKEN and REDIS_URL", id="both unset"),
+    ],
+)
+def test_main_names_each_missing_variable_and_stops_before_redis_and_discord(monkeypatch, env, named):
+    # #18: a missing REDIS_URL used to crash inside redis-py with a traceback, and an empty
+    # DISCORD_TOKEN reached Redis and then client.run(). With DYNO set, main() reads the
+    # environment only and never loads .env.
+    monkeypatch.setenv("DYNO", "pytest")
+    for name in ("DISCORD_TOKEN", "REDIS_URL", "DEV_GUILD_ID"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    bot, _ = import_fresh_bot(monkeypatch)
+
+    with (
+        mock.patch.object(discord.Client, "run", autospec=True) as run,
+        mock.patch.object(redis.asyncio, "from_url") as from_url,
+        pytest.raises(SystemExit) as exited,
+    ):
+        bot.main()
+
+    assert exited.value.code == exit_line_for_missing(named)
+    # No Redis client was built, so nothing reached Redis, and nothing reached Discord.
+    from_url.assert_not_called()
+    assert bot.redis_client is None
+    run.assert_not_called()
+
+
+def test_a_env_copied_from_the_example_stops_at_the_empty_token(monkeypatch):
+    # Without DYNO, main() loads .env first. `cp .env.example .env` gives DISCORD_TOKEN= until
+    # the token is filled in, and an empty value counts as missing.
+    monkeypatch.delenv("DYNO", raising=False)
+    for name in ("DISCORD_TOKEN", "REDIS_URL", "DEV_GUILD_ID"):
+        monkeypatch.delenv(name, raising=False)
+    bot, _ = import_fresh_bot(monkeypatch)
+
+    def load_a_copy_of_the_example():
+        # Stands in for load_dotenv() on that .env, with .env.example's values; no real .env is read.
+        monkeypatch.setenv("DISCORD_TOKEN", "")
+        monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+        monkeypatch.setenv("DEV_GUILD_ID", "")
+
+    with (
+        mock.patch.object(discord.Client, "run", autospec=True) as run,
+        mock.patch.object(bot, "load_dotenv", side_effect=load_a_copy_of_the_example) as load_dotenv,
+        mock.patch.object(redis.asyncio, "from_url") as from_url,
+        pytest.raises(SystemExit) as exited,
+    ):
+        bot.main()
+
+    load_dotenv.assert_called_once_with()
+    assert exited.value.code == exit_line_for_missing("DISCORD_TOKEN")
+    from_url.assert_not_called()
+    assert bot.redis_client is None
+    run.assert_not_called()
+
+
 def test_main_exits_with_a_clear_message_when_redis_does_not_answer(monkeypatch):
     # #15: the bot used to start anyway, and then every save failed and every read said
     # that nothing was stored.
