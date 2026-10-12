@@ -8,6 +8,11 @@
 .git
 .worktrees
 
+# Local agent files, as in .gitignore (#26)
+CLAUDE.local.md
+.claude/settings.local.json
+.sisyphus
+
 # Virtualenvs
 .venv
 venv
