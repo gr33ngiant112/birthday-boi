@@ -12,10 +12,6 @@ import asyncio
 import logging
 import sys
 from urllib.parse import urlparse
-import spacy  # Added spaCy for enhanced message extraction
-
-# Load spaCy's English model
-nlp = spacy.load("en_core_web_sm")
 
 # Read from the environment by main(), so importing this module reads no config.
 TOKEN = None
@@ -65,7 +61,7 @@ MONTHLY_POST_MARKER_TTL = datetime.timedelta(days=40)
 # Errors are logged here. A log line never includes a birth date.
 log = logging.getLogger(__name__)
 
-# What a member is told when Redis fails. The chat reply is public, so neither has a date.
+# What a member is told when Redis fails.
 SAVE_FAILED = "⚠️ Storage is unavailable, so your birthday was not saved. Please try again later."
 READ_FAILED = "⚠️ Storage is unavailable. Please try again later."
 
@@ -184,8 +180,7 @@ def next_occurrence(month, day, today):
     return datetime.date(year, month, day)
 
 
-# Why a parsed date cannot be a birth date, or None if it can. A chat reply is public,
-# so the message never repeats the date.
+# Why a date cannot be a birth date, or None if it can.
 def birth_date_error(birthday_date, today):
     if birthday_date > today:
         return "❌ That date is in the future. Please check the year and try again."
@@ -303,133 +298,6 @@ async def on_guild_remove(guild):
     # Removing every member empties the guild's set, and Redis deletes an empty set.
     for user_id in await redis_client.smembers(f"guild:{guild.id}:birthdays"):
         await remove_birthday_from_guild_redis(guild.id, user_id)
-
-
-@client.event
-async def on_message(message):
-    # Ignore messages from the bot itself
-    if message.author == client.user:
-        return
-
-    # Answer only a direct mention of the bot in a server: not DMs, and not
-    # @everyone or @here, which client.user.mentioned_in() also counts.
-    if message.guild is not None and not message.mention_everyone and client.user in message.mentions:
-        content = message.content.lower()
-
-        # Use spaCy to process the message
-        doc = nlp(content)
-
-        # Extract potential date entities using spaCy
-        extracted_date = None
-        for ent in doc.ents:
-            if ent.label_ == "DATE":
-                extracted_date = ent.text
-                break
-
-        # Infer intent using expanded keyword matching
-        intent = None
-        if any(
-            phrase in content
-            for phrase in [
-                "my birthday is",
-                "my bday is",
-                "set my birthday",
-                "set my birthday to",
-                "update my birthday",
-            ]
-        ):
-            intent = "set"
-        elif any(
-            phrase in content
-            for phrase in [
-                "what is my",
-                "when is my",
-                "when my",
-                "what my",
-                "my birthday",
-                "when is my fucking birthday",
-                "when do i get older",
-                "next birthday",
-            ]
-        ):
-            intent = "get"
-        elif any(
-            phrase in content
-            for phrase in [
-                "what is",
-                "when is",
-                "next birthday",
-                "birthday",
-                "bday",
-                "when is @everyone's birthday",
-                "what birthdates are coming up",
-                "what bdays are coming up",
-            ]
-        ):
-            intent = "get_other"
-
-        # Handle the inferred intent
-        if intent == "set":
-            # Use the extracted date if available
-            date_part = (
-                extracted_date
-                if extracted_date
-                else content.replace(f"@{client.user.name.lower()}", "")
-                .replace("my birthday is", "")
-                .replace("set my birthday to", "")
-                .strip()
-            )
-
-            # Ensure the extracted date part is clean
-            date_part = (
-                date_part.replace(",", "").replace("th", "").replace("st", "").replace("nd", "").replace("rd", "")
-            )
-
-            birthday_date = None
-
-            # Try parsing the date in various formats
-            for fmt in ["%m%d%Y", "%m-%d-%Y", "%m/%d/%Y", "%Y%m%d", "%B %d %Y", "%B %d, %Y"]:
-                try:
-                    birthday_date = datetime.datetime.strptime(date_part, fmt).date()  # noqa: DTZ007 - date only
-                    break
-                except ValueError:
-                    continue
-
-            # A date no one could be born on, such as 2099 typed for 1999, is refused, not stored.
-            error = birth_date_error(birthday_date, datetime.date.today()) if birthday_date else None  # noqa: DTZ011 - the host's date
-
-            if error:
-                await message.reply(error, mention_author=False)
-            elif birthday_date:
-                # Store the birthday and share it with this server
-                try:
-                    await set_birthday_redis(message.guild.id, message.author.id, birthday_date.isoformat())
-                except StoreUnavailable as e:
-                    log.error("Storage unavailable in a chat set (%s)", e)
-                    await message.reply(SAVE_FAILED, mention_author=False)
-                    return
-                await message.reply(
-                    f"✅ Your birthday has been updated to {birthday_date.strftime('%m-%d-%Y')}.", mention_author=False
-                )
-            else:
-                await message.reply(
-                    "❌ I couldn't understand the date format. Please try again with a valid date.",
-                    mention_author=False,
-                )
-
-        # Lookups get one public reply with no date or name in it; /get_birthday
-        # shows a birthday only to the member who asks.
-        elif intent == "get":
-            await message.reply(
-                "🔒 Use /get_birthday and pick yourself to see your birthday. Only you will see the answer.",
-                mention_author=False,
-            )
-
-        elif intent == "get_other":
-            await message.reply(
-                "🔒 Use /get_birthday and pick the member to see their birthday. Only you will see the answer.",
-                mention_author=False,
-            )
 
 
 # Slash command to set a birthday

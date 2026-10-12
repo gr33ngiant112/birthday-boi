@@ -207,22 +207,12 @@ def test_forecast_description_and_empty_state_say_90_days(fake_redis, freeze_tod
     assert [content for content, _ in interaction.sent] == ["❌ No birthdays in the next 90 days."]
 
 
-def set_birthday(set_with, gateway, guild, birthday):
-    """Set SETTER's birthday in guild with /set_birthday or a chat message; return the text of each reply."""
-    if set_with == "chat":
-        # The dates below use month names without "st", "nd", "rd" or "th", which
-        # the chat parser strips from the date text (#16).
-        phrase = f"{birthday.strftime('%B')} {birthday.day} {birthday.year}"
-        message = gateway.message(
-            guild, SETTER, f"<@{gateway.bot_user.id}> my birthday is {phrase}", mentions=[gateway.mention_bot()]
-        )
-        asyncio.run(bot.on_message(message))
-        return [payload.get("content") or "" for payload in gateway.sent_to(message.channel)]
+def set_birthday(gateway, guild, birthday):
+    """Set SETTER's birthday in guild with /set_birthday; return the text of each reply."""
     interaction = run_command(gateway, guild, SETTER, "set_birthday", birthday.strftime("%m-%d-%Y"))
     return [content or "" for content, _ in interaction.sent]
 
 
-@pytest.mark.parametrize("set_with", ["slash command", "chat"])
 @pytest.mark.parametrize(
     ("birthday", "why"),
     [
@@ -231,26 +221,23 @@ def set_birthday(set_with, gateway, guild, birthday):
         pytest.param(datetime.date(1905, 12, 31), "more than 120 years ago", id="1905"),
     ],
 )
-def test_setting_an_impossible_birth_date_is_refused_and_not_stored(
-    birthday, why, set_with, fake_redis, freeze_today, gateway
-):
+def test_setting_an_impossible_birth_date_is_refused_and_not_stored(birthday, why, fake_redis, freeze_today, gateway):
     freeze_today(SET_TODAY)
     guild = gateway.add_guild(GUILD_ID, "Guild", [SETTER])
 
-    replies = set_birthday(set_with, gateway, guild, birthday)
+    replies = set_birthday(gateway, guild, birthday)
 
     if len(replies) != 1:
         pytest.fail(f"setup: expected one reply, got {replies!r}")
     [reply] = replies
     assert reply.startswith("❌")
     assert why in reply
-    # The chat reply is public, so it never repeats the date in any form bot.py writes one.
+    # The reply never repeats the date in any form bot.py writes one.
     forms = [birthday.isoformat(), birthday.strftime("%m-%d-%Y"), birthday.strftime("%m-%d"), str(birthday.year)]
     assert [form for form in forms if form in reply] == []
     assert fake_redis.contents() == {}
 
 
-@pytest.mark.parametrize("set_with", ["slash command", "chat"])
 @pytest.mark.parametrize(
     "birthday",
     [
@@ -259,11 +246,11 @@ def test_setting_an_impossible_birth_date_is_refused_and_not_stored(
         pytest.param(datetime.date(1990, 12, 25), id="1990"),
     ],
 )
-def test_setting_a_birth_date_in_range_stores_it(birthday, set_with, fake_redis, freeze_today, gateway):
+def test_setting_a_birth_date_in_range_stores_it(birthday, fake_redis, freeze_today, gateway):
     freeze_today(SET_TODAY)
     guild = gateway.add_guild(GUILD_ID, "Guild", [SETTER])
 
-    replies = set_birthday(set_with, gateway, guild, birthday)
+    replies = set_birthday(gateway, guild, birthday)
 
     if len(replies) != 1:
         pytest.fail(f"setup: expected one reply, got {replies!r}")

@@ -119,10 +119,6 @@ def test_no_view_reads_with_keys_or_scan(fake_redis, freeze_today, gateway, monk
         asyncio.run(getattr(bot, command).callback(interaction, *args))
         texts[command] = "\n".join(content or "" for content, _ in interaction.sent)
     texts["monthly post"] = run_view("monthly post", gateway, guild, ASKER)
-    message = gateway.message(
-        guild, ASKER, f"<@{gateway.bot_user.id}> my birthday is December 25 1990", mentions=[gateway.mention_bot()]
-    )
-    asyncio.run(bot.on_message(message))
     # Then the paths that delete: ASKER forgets their birthday, and the bot leaves the guild.
     asyncio.run(bot.forget_birthday.callback(gateway.interaction(guild, guild.get_member(ASKER[0]))))
     asyncio.run(bot.client.on_guild_remove(guild))

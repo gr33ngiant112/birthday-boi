@@ -28,7 +28,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 EXPECTED_COMMANDS = {"set_birthday", "get_birthday", "list_birthdays", "forecast_birthdays", "forget_birthday"}
 EXPECTED_LOOPS = {"check_upcoming_birthdays"}
-EXPECTED_EVENT_HANDLERS = {"on_ready", "on_guild_remove", "on_message"}
+EXPECTED_EVENT_HANDLERS = {"on_ready", "on_guild_remove"}
 
 
 def assert_same(kind, found, expected):

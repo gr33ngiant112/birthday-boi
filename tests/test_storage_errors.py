@@ -2,8 +2,7 @@
 
 The storage helpers raise bot.StoreUnavailable, with the redis.RedisError as its cause.
 The slash commands then tell the member, and only them, that storage is unavailable; the
-chat path answers in public, so its reply carries no date; the monthly post skips the
-guild it could not read and goes on with the others. Each failure is logged with the
+monthly post skips the guild it could not read and goes on with the others. Each failure is logged with the
 logging module, and no birth date reaches the log.
 
 Two failures are emulated on the fakeredis server:
@@ -71,18 +70,11 @@ FAILURES = {
 }
 
 
-def set_birthday_through(path, gateway, guild):
-    """SETTER sets BIRTHDAY in guild through path. Returns the replies as (content, ephemeral)."""
-    if path == "/set_birthday":
-        interaction = gateway.interaction(guild, guild.get_member(SETTER[0]))
-        asyncio.run(bot.set_birthday.callback(interaction, BIRTHDAY.strftime("%m-%d-%Y")))
-        return [(content, kwargs.get("ephemeral")) for content, kwargs in interaction.sent]
-    message = gateway.message(
-        guild, SETTER, f"<@{gateway.bot_user.id}> my birthday is December 25 1990", mentions=[gateway.mention_bot()]
-    )
-    asyncio.run(bot.on_message(message))
-    # A chat reply is a message in the channel: everyone who can read the channel sees it.
-    return [(payload.get("content"), None) for payload in gateway.sent_to(gateway.general(guild))]
+def set_birthday(gateway, guild):
+    """SETTER sets BIRTHDAY in guild with /set_birthday. Returns the replies as (content, ephemeral)."""
+    interaction = gateway.interaction(guild, guild.get_member(SETTER[0]))
+    asyncio.run(bot.set_birthday.callback(interaction, BIRTHDAY.strftime("%m-%d-%Y")))
+    return [(content, kwargs.get("ephemeral")) for content, kwargs in interaction.sent]
 
 
 def logged_errors(caplog):
@@ -119,21 +111,19 @@ def test_store_unavailable_does_not_repeat_the_refused_command(fake_redis):
 
 
 @pytest.mark.parametrize("failure", FAILURES)
-@pytest.mark.parametrize("path", ["/set_birthday", "chat"])
-def test_a_failed_save_is_never_reported_as_saved(path, failure, fake_redis, freeze_today, gateway, caplog, capsys):
+def test_a_failed_save_is_never_reported_as_saved(failure, fake_redis, freeze_today, gateway, caplog, capsys):
     freeze_today(datetime.date(2026, 10, 5))
     guild = gateway.add_guild(GUILD_ID, "Guild", [SETTER])
     break_redis, undo = FAILURES[failure]
     break_redis(fake_redis)
 
-    replies = set_birthday_through(path, gateway, guild)
+    replies = set_birthday(gateway, guild)
 
     undo(fake_redis)
     if fake_redis.contents():
         pytest.fail(f"setup: the store should have refused the write, got {fake_redis.contents()!r}")
-    # One reply, which says the birthday was not saved: only to the member for the slash
-    # command, and without the date in the public chat reply.
-    assert replies == [(SAVE_FAILED, True if path == "/set_birthday" else None)]
+    # One reply, only to the member, which says the birthday was not saved.
+    assert replies == [(SAVE_FAILED, True)]
     assert logged_errors(caplog) != []
     printed = capsys.readouterr()
     assert [form for form in DATE_FORMS if form in caplog.text + printed.out + printed.err] == []

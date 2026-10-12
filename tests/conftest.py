@@ -7,7 +7,7 @@
   gets from datetime.datetime.now(): 15:00 UTC on that date, when the monthly post goes out.
 - freeze_now: a frozen clock for bot.py and for discord.py's task loop, which the test
   moves with set(). It also sets the zone of the host, which date.today() reads.
-- gateway: real discord.py guilds, channels, members and messages, built from
+- gateway: real discord.py guilds, channels and members, built from
   gateway-shaped payloads on the bot client's own ConnectionState. Channel messages
   are captured at HTTPClient.send_message, after discord.py has built the final
   request payload (including the effective allowed_mentions) and before any HTTP.
@@ -252,70 +252,6 @@ class Gateway:
     @staticmethod
     def general(guild):
         return discord.utils.get(guild.text_channels, name="general")
-
-    @staticmethod
-    def mention(user_id, name, *, nick=None, member=True):
-        """A user in a MESSAGE_CREATE's mentions list, with the partial member Discord adds in guilds.
-
-        member=False leaves the partial member out, as for a user who is not in the
-        guild or a mention in a DM.
-        """
-        data = user_payload(user_id, name)
-        if member:
-            data["member"] = {
-                "nick": nick,
-                "roles": [],
-                "joined_at": TIMESTAMP,
-                "flags": 0,
-                "deaf": False,
-                "mute": False,
-            }
-        return data
-
-    def mention_bot(self, *, member=True):
-        return self.mention(BOT_ID, BOT_NAME, member=member)
-
-    def message(self, guild, author, content, *, mentions=(), mention_everyone=False):
-        """A MESSAGE_CREATE in the guild's #general. author is (user_id, name).
-
-        mention_everyone is the flag Discord sets on a message that pings @everyone or @here.
-        """
-        channel = self.general(guild)
-        payload = self._message_payload(channel, author, content, mentions, mention_everyone)
-        payload["guild_id"] = str(guild.id)
-        payload["member"] = {"roles": [], "joined_at": TIMESTAMP, "flags": 0, "deaf": False, "mute": False}
-        return discord.Message(state=self.state, channel=channel, data=payload)
-
-    def dm_message(self, author, content, *, mentions=()):
-        """A MESSAGE_CREATE in a DM between author, (user_id, name), and the bot.
-
-        A DM has no guild_id or member data: build its mentions with member=False.
-        """
-        author_id, author_name = author
-        channel_data = {"id": str(next(self._ids)), "type": 1, "recipients": [user_payload(author_id, author_name)]}
-        channel = discord.DMChannel(me=self.bot_user, state=self.state, data=channel_data)
-        payload = self._message_payload(channel, author, content, mentions, False)
-        return discord.Message(state=self.state, channel=channel, data=payload)
-
-    def _message_payload(self, channel, author, content, mentions, mention_everyone):
-        author_id, author_name = author
-        return {
-            "id": str(next(self._ids)),
-            "channel_id": str(channel.id),
-            "type": 0,
-            "content": content,
-            "author": user_payload(author_id, author_name),
-            "mentions": list(mentions),
-            "mention_roles": [],
-            "mention_everyone": mention_everyone,
-            "attachments": [],
-            "embeds": [],
-            "pinned": False,
-            "tts": False,
-            "timestamp": TIMESTAMP,
-            "edited_timestamp": None,
-            "flags": 0,
-        }
 
     async def send_message(self, channel_id, *, params):
         payload = copy.deepcopy(params.payload)
