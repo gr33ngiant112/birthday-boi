@@ -26,8 +26,15 @@ import bot
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-EXPECTED_COMMANDS = {"birthday set", "birthday show", "birthday list", "birthday upcoming", "birthday forget"}
-EXPECTED_LOOPS = {"check_upcoming_birthdays", "heartbeat"}
+EXPECTED_COMMANDS = {
+    "birthday set",
+    "birthday show",
+    "birthday list",
+    "birthday upcoming",
+    "birthday forget",
+    "birthday config",
+}
+EXPECTED_LOOPS = {"check_upcoming_birthdays", "heartbeat", "send_birthday_greetings"}
 EXPECTED_EVENT_HANDLERS = {"on_ready", "on_guild_remove"}
 
 
