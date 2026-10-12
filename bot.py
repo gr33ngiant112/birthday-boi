@@ -226,7 +226,7 @@ async def check_upcoming_birthdays():
                 upcoming_bd = next_occurrence(bd.month, bd.day, today)
                 if upcoming_bd.month in [today.month, next_month, month_after]:
                     upcoming.append((upcoming_bd, user_id))
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the post; #37 narrows this
                 print(f"❌ Error processing birthday for user {user_id}: {e}")
 
         if not upcoming:
@@ -246,7 +246,7 @@ async def check_upcoming_birthdays():
         try:
             for chunk in chunk_messages("🎉 **Upcoming Birthdays:**", lines):
                 await channel.send(chunk)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - a failed send must not stop the other guilds' posts; #37 narrows this
             print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
 
 
@@ -259,7 +259,7 @@ async def before_check_upcoming_birthdays():
     if datetime.datetime.now(datetime.UTC).timetz() > MONTHLY_POST_TIME:
         try:
             await check_upcoming_birthdays()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - any error would end the task; see the comment below
             # Raised here, the error would end the task before its first scheduled run.
             log.error("The monthly post at startup failed (%s)", type(e).__name__)
 
@@ -390,13 +390,13 @@ async def on_message(message):
             # Try parsing the date in various formats
             for fmt in ["%m%d%Y", "%m-%d-%Y", "%m/%d/%Y", "%Y%m%d", "%B %d %Y", "%B %d, %Y"]:
                 try:
-                    birthday_date = datetime.datetime.strptime(date_part, fmt).date()
+                    birthday_date = datetime.datetime.strptime(date_part, fmt).date()  # noqa: DTZ007 - date only
                     break
                 except ValueError:
                     continue
 
             # A date no one could be born on, such as 2099 typed for 1999, is refused, not stored.
-            error = birth_date_error(birthday_date, datetime.date.today()) if birthday_date else None
+            error = birth_date_error(birthday_date, datetime.date.today()) if birthday_date else None  # noqa: DTZ011 - the host's date
 
             if error:
                 await message.reply(error, mention_author=False)
@@ -445,11 +445,11 @@ async def set_birthday(interaction: discord.Interaction, date: str):
     try:
         # Try MM-DD-YYYY first, then fallback to YYYY-MM-DD
         try:
-            birthday_date = datetime.datetime.strptime(date, "%m-%d-%Y").date()
+            birthday_date = datetime.datetime.strptime(date, "%m-%d-%Y").date()  # noqa: DTZ007 - date only
         except ValueError:
-            birthday_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()
+            birthday_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()  # noqa: DTZ007 - date only
         # A date no one could be born on is refused, not stored.
-        error = birth_date_error(birthday_date, datetime.date.today())
+        error = birth_date_error(birthday_date, datetime.date.today())  # noqa: DTZ011 - the host's date
         if error:
             await interaction.followup.send(error, ephemeral=True)
             return
@@ -484,7 +484,7 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
             # Parse the stored birthday
             birthdate = datetime.date.fromisoformat(birthday_str)
             # Compute the next birthday, today or later
-            today = datetime.date.today()
+            today = datetime.date.today()  # noqa: DTZ011 - the host's date
             next_birthday = next_occurrence(birthdate.month, birthdate.day, today)
 
             await interaction.followup.send(
@@ -492,7 +492,7 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
                 f"{birthdate.strftime('%m-%d-%Y')} - next birthday {next_birthday.strftime('%A, %B %d %Y')}",
                 ephemeral=True,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - the member gets an error reply, not silence; #37 narrows this
             print(f"❌ Error processing birthday for user {user_id}: {e}")
             await interaction.followup.send("❌ An error occurred while retrieving the birthday.", ephemeral=True)
     else:
@@ -513,7 +513,7 @@ async def list_birthdays(interaction: discord.Interaction):
 
     # One line per member. <@id> shows the member's name without the member cache.
     lines = []
-    today = datetime.date.today()
+    today = datetime.date.today()  # noqa: DTZ011 - the host's date
     for user_id, birthday_str in birthdays:
         try:
             # Parse the stored birthday
@@ -525,7 +525,7 @@ async def list_birthdays(interaction: discord.Interaction):
                 f"<@{user_id}> - {birthdate.strftime('%m-%d-%Y')} - "
                 f"next birthday {next_birthday.strftime('%A, %B %d %Y')}"
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the list; #37 narrows this
             print(f"❌ Error processing birthday for user {user_id}: {e}")
 
     if lines:
@@ -540,7 +540,7 @@ async def list_birthdays(interaction: discord.Interaction):
 @app_commands.guild_only()
 async def forecast_birthdays(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)  # Prevent timeout while fetching data
-    today = datetime.date.today()
+    today = datetime.date.today()  # noqa: DTZ011 - the host's date
     try:
         birthdays = await get_guild_birthdays_redis(interaction.guild_id)
     except StoreUnavailable as e:
@@ -558,7 +558,7 @@ async def forecast_birthdays(interaction: discord.Interaction):
                 # Calculate age on the next birthday
                 age = upcoming_bd.year - bd.year
                 upcoming_birthdays.append((user_id, upcoming_bd, age))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the forecast; #37 narrows this
             print(f"❌ Error processing birthday for user {user_id}: {e}")
 
     if upcoming_birthdays:

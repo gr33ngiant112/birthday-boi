@@ -102,7 +102,7 @@ def runs(monkeypatch):
     return ended
 
 
-async def eventually(condition, timeout=5):
+async def eventually(condition, timeout=5):  # noqa: ASYNC109 - returns False at the deadline instead of raising
     """Wait, in real time, until condition() is true; return whether it was within timeout seconds."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
