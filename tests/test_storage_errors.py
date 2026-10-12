@@ -140,13 +140,17 @@ def test_a_failed_read_is_never_shown_as_nothing_stored(command, fake_redis, fre
     def run_command():
         interaction = gateway.interaction(guild, guild.get_member(SETTER[0]))
         asyncio.run(getattr(bot, command).callback(interaction, *args))
-        return [(content, kwargs.get("ephemeral")) for content, kwargs in interaction.sent]
+        # What the member reads in each reply, embeds included (#37), and whether it is ephemeral.
+        return [
+            (text, kwargs.get("ephemeral"))
+            for text, (_, kwargs) in zip(interaction.texts(), interaction.sent, strict=True)
+        ]
 
     while_up = run_command()
     take_redis_down(fake_redis)
     while_down = run_command()
 
-    if not any(f"<@{MEMBER[0]}>" in (content or "") for content, _ in while_up):
+    if not any(f"<@{MEMBER[0]}>" in text for text, _ in while_up):
         pytest.fail(f"setup: with Redis up, /{command} should show MEMBER, got {while_up!r}")
     # Not "has not set their birthday yet", "No birthdays have been set yet." or "No
     # birthdays in the next 90 days.": the store could not be read, so the bot cannot know.

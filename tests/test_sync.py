@@ -2,7 +2,7 @@
 
 A global sync replaces the bot's commands in every server, so a build that is missing a
 command deletes it everywhere. The client's setup_hook() runs as at login, with
-CommandTree.sync faked so that nothing reaches Discord and the monthly task not started.
+CommandTree.sync faked so that nothing reaches Discord and the task loops not started.
 """
 
 import asyncio
@@ -31,16 +31,21 @@ def setup_hook(monkeypatch):
 
     sync = mock.AsyncMock(side_effect=send)
     sync.sent = []
-    start = mock.Mock()
     monkeypatch.setattr(bot.client.tree, "sync", sync)
-    monkeypatch.setattr(bot.check_upcoming_birthdays, "start", start)
 
     def run(dev_guild_id=None, sync_commands=False):
         monkeypatch.setattr(bot, "DEV_GUILD_ID", dev_guild_id)
         monkeypatch.setattr(bot, "SYNC_COMMANDS", sync_commands)
         asyncio.run(bot.client.setup_hook())
 
-    yield run, sync, start
+    # mock.patch, not monkeypatch: on the way out it deletes the loops' own start attribute, so
+    # Loop.start is the class's again (monkeypatch would leave a copy on the loop behind).
+    with (
+        mock.patch.object(bot.check_upcoming_birthdays, "start") as start,
+        mock.patch.object(bot.heartbeat, "start"),
+        mock.patch.object(bot.send_birthday_greetings, "start"),
+    ):
+        yield run, sync, start
     # The copies copy_global_to() made for the development server.
     bot.client.tree.clear_commands(guild=discord.Object(id=DEV_GUILD_ID))
 

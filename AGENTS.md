@@ -12,6 +12,7 @@
 
 - Never read, print or edit `.env`. It holds the development bot token, and `python bot.py` loads it.
 - Make targeted edits to `bot.py`. Never regenerate or re-paste it whole: that is how 91b142b and 7a98e91 deleted slash commands and the monthly task, and how 79c6556 left a second copy of the file that would not parse.
+- Date logic goes in `core.py`: computing dates, windows and ages, and turning dates into text. It imports neither discord nor redis and never reads the clock; `bot.py` reads today's date and passes it in. `tests/test_core.py` checks its properties with hypothesis.
 - A global command sync replaces the commands in every server, so a build missing a command deletes it everywhere. Develop with `DEV_GUILD_ID`. `python bot.py --sync` is only for a release that changes the commands.
 - If a change adds, removes or renames a slash command, task loop or event handler, update the expected sets in `tests/test_registry.py` in the same change.
 - `tests/` enforces the privacy, mention and date rules. Keep it green, and don't edit or delete a test to make a change pass. A PR that leaves fewer tests than its base fails the Test count check unless the owner adds the `tests-removed` label.

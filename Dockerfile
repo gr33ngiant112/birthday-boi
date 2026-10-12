@@ -1,7 +1,8 @@
 # Stages:
 #   uv       uv's own image. Its /uv binary is mounted only while packages install, so uv is not in
 #            the bot's image.
-#   runtime  the bot's image: the packages uv.lock pins and bot.py, run as an unprivileged user.
+#   runtime  the bot's image: the packages uv.lock pins, bot.py and core.py, run as an unprivileged
+#            user.
 #   test     runtime plus the dev tools and the tests; `docker run` lints, checks the format and
 #            runs the tests.
 #   (last)   runtime again, so a plain `docker build .` builds the bot's image, not the test image.
@@ -15,7 +16,7 @@ FROM ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce2459468
 # requires-python and .python-version name the same Python version.
 FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS runtime
 
-# print() output reaches `docker logs` at once instead of waiting in a buffer.
+# The bot's output reaches `docker logs` at once instead of waiting in a buffer.
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
@@ -40,15 +41,21 @@ RUN --mount=from=uv,source=/uv,target=/bin/uv \
 # `python` is the virtualenv's Python, which has the packages.
 ENV PATH=/app/.venv/bin:$PATH
 
-COPY bot.py ./
+COPY bot.py core.py ./
 USER 10001
 CMD ["python", "bot.py"]
+# The bot touches its heartbeat file every minute while it is connected to Discord (#35).
+# `python bot.py --healthcheck` fails when the file is missing or 3 minutes old, and after 3
+# failed checks in a row Docker marks the container unhealthy. The start period leaves time to
+# log in and write the first heartbeat.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=2m --retries=3 CMD ["python", "bot.py", "--healthcheck"]
 
-# The tests run against the runtime stage's bot.py and packages. .github/scripts/ is here so the
-# lint covers every Python file CI linted on the host.
+# The tests run against the runtime stage's bot.py, core.py and packages. .github/scripts/ is
+# here so the lint covers every Python file CI linted on the host.
 FROM runtime AS test
 USER 0
-# Adds pyproject.toml's dev group (ruff, pytest, fakeredis, pre-commit) to the same virtualenv.
+# Adds pyproject.toml's dev group (ruff, pytest, hypothesis, fakeredis, pre-commit) to the same
+# virtualenv.
 RUN --mount=from=uv,source=/uv,target=/bin/uv \
     uv sync --locked --no-build --group dev
 COPY pytest.ini ./
@@ -57,7 +64,9 @@ COPY .github/scripts/ .github/scripts/
 USER 10001
 # `ruff check`, then `ruff format --check`, which also fails on a CRLF file, then the tests; ruff
 # reads its settings from pyproject.toml. The bot user cannot write to /app, so ruff and pytest run
-# without their caches.
+# without their caches, and hypothesis keeps its example database in /tmp, which `docker run --rm`
+# discards; in /app it would warn and fall back to memory.
+ENV HYPOTHESIS_STORAGE_DIRECTORY=/tmp/hypothesis
 CMD ["sh", "-c", "ruff check --no-cache . && ruff format --no-cache --check . && exec pytest -q -p no:cacheprovider"]
 
 FROM runtime

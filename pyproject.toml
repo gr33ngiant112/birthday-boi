@@ -5,7 +5,7 @@
 [project]
 name = "birthday-boi"
 # The release version, as CHANGELOG.md lists it (uv requires one).
-version = "0.1.0"
+version = "0.2.0"
 # One Python minor version. Upgrades to the next one are made by hand: requires-python,
 # .python-version and the Dockerfile's python:3.12-slim name the same version.
 requires-python = ">=3.12,<3.13"
@@ -21,6 +21,9 @@ dependencies = [
 # Floors: the versions CI pinned before uv.lock, and the versions uv.lock has.
 dev = [
     "fakeredis>=2.39.0",
+    # Property tests of core.py (#32). 6.168.4 was the newest release at least 7 days old, as
+    # Dependabot's cooldown waits for.
+    "hypothesis>=6.168.4",
     "pre-commit>=4.6.2",
     "pytest>=9.1.1",
     "ruff>=0.16.10",

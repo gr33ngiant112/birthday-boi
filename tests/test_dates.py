@@ -19,9 +19,11 @@ stores ISO 8601's "--MM-DD", which every view reads.
 import asyncio
 import datetime
 
+import discord
 import pytest
 
 import bot
+import core
 
 LEAP_DAY_BIRTHDAY = "2000-02-29"
 LEAPLING = (200000000000001001, "leapling")
@@ -41,7 +43,7 @@ def run_command(gateway, guild, user, command, *args):
 
 
 def text_of(interaction):
-    return "\n".join(content or "" for content, _ in interaction.sent)
+    return "\n".join(interaction.texts())
 
 
 @pytest.mark.parametrize(
@@ -78,7 +80,7 @@ def test_birthday_list_includes_a_leap_day_birthday(fake_redis, freeze_today, ga
 
     asyncio.run(bot.birthday_list.callback(interaction))
 
-    text = "\n".join(content or "" for content, _ in interaction.sent)
+    text = text_of(interaction)
     if f"<@{CONTROL[0]}>" not in text:
         pytest.fail(f"setup: the control user should be listed, got {text!r}")
     assert f"<@{LEAPLING[0]}>" in text
@@ -95,7 +97,7 @@ def test_birthday_upcoming_includes_a_leap_day_birthday(fake_redis, freeze_today
 
     asyncio.run(bot.birthday_upcoming.callback(interaction, 90))
 
-    text = "\n".join(content or "" for content, _ in interaction.sent)
+    text = text_of(interaction)
     if f"<@{CONTROL[0]}>" not in text:
         pytest.fail(f"setup: the control user should be in the list, got {text!r}")
     assert f"<@{LEAPLING[0]}>" in text
@@ -130,7 +132,7 @@ def test_monthly_post_includes_a_leap_day_birthday(fake_redis, freeze_today, gat
 )
 def test_next_occurrence_of_a_leap_day_birthday(today, expected):
     # In a year without Feb 29, the birthday falls on Feb 28.
-    assert bot.next_occurrence(2, 29, today) == expected
+    assert core.next_occurrence(2, 29, today) == expected
 
 
 def test_next_occurrence_of_every_month_and_day_from_every_day_of_four_years():
@@ -152,7 +154,7 @@ def test_next_occurrence_of_every_month_and_day_from_every_day_of_four_years():
             nearest[(2, 29)] = day
         if day <= last_today:
             for month, day_of_month in every_month_and_day:
-                got = bot.next_occurrence(month, day_of_month, day)
+                got = core.next_occurrence(month, day_of_month, day)
                 if got != nearest[(month, day_of_month)]:
                     wrong.append(((month, day_of_month), day, got, nearest[(month, day_of_month)]))
         day -= one_day
@@ -221,7 +223,8 @@ def test_birthday_upcoming_row_for_a_birthday_next_year(fake_redis, freeze_today
 
     # Jan 10 2027 is a Sunday, and a member born in 1990 turns 37 that day. Only the asker sees it.
     row = f"<@{MEMBER[0]}> - Sunday, January 10 - turning 37"
-    assert interaction.sent == [(f"🎉 **Upcoming Birthdays:**\n{row}", {"ephemeral": True})]
+    embed = discord.Embed(title="🎉 Upcoming Birthdays", description=row)
+    assert interaction.sent == [(None, {"embed": embed, "ephemeral": True})]
 
 
 @pytest.mark.parametrize(
@@ -365,8 +368,8 @@ def test_every_view_reads_a_birthday_stored_without_a_year(view, fake_redis, fre
     next_birthday = "next birthday Friday, December 25 2026"
     expected = {
         "birthday_show": f"🎂 **<@{MEMBER[0]}>'s Birthday:**\nDecember 25 - {next_birthday}",
-        "birthday_list": f"🎉 **Server Birthdays:**\n<@{MEMBER[0]}> - December 25 - {next_birthday}",
-        "birthday_upcoming": f"🎉 **Upcoming Birthdays:**\n<@{MEMBER[0]}> - Friday, December 25",
+        "birthday_list": f"🎉 Server Birthdays\n<@{MEMBER[0]}> - December 25 - {next_birthday}",
+        "birthday_upcoming": f"🎉 Upcoming Birthdays\n<@{MEMBER[0]}> - Friday, December 25",
         "monthly post": f"🎉 **Upcoming Birthdays:**\n<@{MEMBER[0]}> - Friday, December 25",
     }
     assert text == expected[view]
