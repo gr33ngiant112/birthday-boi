@@ -26,7 +26,7 @@ dependencies = [
 
 [dependency-groups]
 # Lint, tests and the pre-commit hooks. `uv sync` installs this group unless given --no-dev.
-# Floors: requirements-dev.txt's pins, which uv.lock keeps.
+# Floors: the versions CI pinned before uv.lock, and the versions uv.lock has.
 dev = [
     "fakeredis>=2.39.0",
     "pre-commit>=4.6.2",
