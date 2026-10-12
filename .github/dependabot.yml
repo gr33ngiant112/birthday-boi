@@ -34,7 +34,7 @@ updates:
       prefix: ci
       include: scope
 
-  # The Dockerfile's FROM lines: python:3.11-slim and uv's image, both pinned to their digests.
+  # The Dockerfile's FROM lines: python:3.12-slim and uv's image, both pinned to their digests.
   - package-ecosystem: docker
     directory: /
     schedule:
@@ -42,8 +42,9 @@ updates:
     cooldown:
       default-days: 7
     ignore:
-      # Python stays on 3.11 while spaCy 3.5.0 is here (ADR 0001, #30). New digests of
-      # python:3.11-slim, which bring Python 3.11 patch releases, still come.
+      # Python minor upgrades are made by hand, with pyproject.toml's requires-python and
+      # .python-version. New digests of python:3.12-slim, which bring Python 3.12 patch releases,
+      # still come.
       - dependency-name: python
         update-types: [version-update:semver-major, version-update:semver-minor]
     commit-message:

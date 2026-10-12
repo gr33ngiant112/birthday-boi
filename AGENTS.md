@@ -2,7 +2,7 @@
 
 ## Commands
 
-- Set up with uv, as CI does: `uv sync --locked --no-build && . .venv/bin/activate && pre-commit install`. uv creates `.venv` with Python 3.11 (`.python-version`; spaCy 3.5.0 has wheels only up to 3.11) and installs the packages `uv.lock` pins, dev tools included, from wheels only.
+- Set up with uv, as CI does: `uv sync --locked --no-build && . .venv/bin/activate && pre-commit install`. uv creates `.venv` with Python 3.12 (`.python-version`) and installs the packages `uv.lock` pins, dev tools included, from wheels only.
 - After a dependency change in `pyproject.toml`, run `uv lock` and commit `uv.lock` with it. The Docker build runs `uv sync --locked`, which fails on a stale `uv.lock`.
 - Lint: `ruff check .` and `ruff format --check .`, with the settings in `pyproject.toml`. `ruff format .` fixes the format.
 - Test: `pytest -q`. Before each commit, pre-commit runs the lint and `tests/test_registry.py`.

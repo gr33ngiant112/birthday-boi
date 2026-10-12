@@ -1,15 +1,4 @@
 # Advisories the CI dependency scan (osv-scanner on uv.lock) does not fail on. Each entry needs
 # a reason and an ignoreUntil date; after that date the scan fails on it again.
-
-# setuptools 81.0.0: MANIFEST.in exclusion bypass when setuptools builds a source distribution on
-# macOS APFS or HFS+ (aliases GHSA-h35f-9h28-mq5c and CVE-2026-59890; fixed in 83.0.0). Ignoring
-# one ID ignores its aliases.
-[[IgnoredVulns]]
-id = "PYSEC-2026-3447"
-ignoreUntil = 2027-01-12
-reason = """Unreachable: the bot never builds a source distribution. It is a uv project with no \
-build system, and the image installs wheels only (uv sync --no-build). setuptools cannot reach \
-83.0.0 while spaCy 3.5.0 is here: spaCy imports pkg_resources (spacy/cli/info.py:3), which \
-setuptools 82 removed, and with setuptools 83.0.0 on Python 3.11 `import spacy` fails with \
-ModuleNotFoundError: No module named 'pkg_resources'. Phase 4 removes spaCy (ADR 0001, issue \
-#30); then drop the setuptools<82 cap in pyproject.toml and this entry."""
+#
+# None at the moment. CI names this file with --config, so it stays when it has no entries.

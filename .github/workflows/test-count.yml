@@ -43,7 +43,7 @@ jobs:
         with:
           # The Dockerfile's uv. Without a version, setup-uv installs the latest uv.
           version: "0.12.23"
-      # uv.lock's packages, the dev group included, into .venv with Python 3.11 (.python-version),
+      # uv.lock's packages, the dev group included, into .venv with Python 3.12 (.python-version),
       # from wheels only.
       - name: Install the locked dependencies (wheels only)
         run: uv sync --locked --no-build

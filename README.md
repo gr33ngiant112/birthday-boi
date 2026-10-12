@@ -4,7 +4,7 @@
 
 ### Developing
 
-1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/), and [Docker](https://docs.docker.com/engine/install/) with the Compose plugin for the local Redis. Python comes with uv: it uses Python 3.11 (`.python-version`) and downloads it if this machine doesn't have it.
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/), and [Docker](https://docs.docker.com/engine/install/) with the Compose plugin for the local Redis. Python comes with uv: it uses Python 3.12 (`.python-version`) and downloads it if this machine doesn't have it.
 2. In your clone of this repository, create the virtual environment `.venv` with the packages that `uv.lock` pins, the dev tools included, and activate it:
 
 ```bash
