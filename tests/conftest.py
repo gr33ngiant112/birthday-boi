@@ -13,7 +13,7 @@
   request payload (including the effective allowed_mentions) and before any HTTP.
   gateway.interaction() returns a FakeInteraction for slash commands, whose
   responses would go through Discord's webhook endpoints instead; it records the
-  payload discord.py would build for each.
+  payload discord.py would build for each, and carries the member's permissions.
 """
 
 import copy
@@ -59,8 +59,9 @@ class FakeStore(fakeredis.FakeRedis):
         self.sadd(f"user:{user_id}:guilds", guild_id)
 
     def contents(self):
-        """Every key on the fake server and its value: a string, or a set of strings."""
-        return {key: self.smembers(key) if self.type(key) == "set" else self.get(key) for key in self.keys()}
+        """Every key on the fake server and its value: a string, a set of strings, or a dict for a hash."""
+        read = {"set": self.smembers, "hash": self.hgetall}
+        return {key: read.get(self.type(key), self.get)(key) for key in self.keys()}
 
     def clear_monthly_post_markers(self):
         """Delete the markers of the monthly posts made so far, so the task posts as if it had not (#14)."""
@@ -280,8 +281,12 @@ class Gateway:
     def sent_to(self, channel):
         return [payload for channel_id, payload in self.sent if channel_id == channel.id]
 
-    def interaction(self, guild, user):
-        return FakeInteraction(guild, user, self.state)
+    def interaction(self, guild, user, permissions=None):
+        """A slash command run by user in guild. permissions: the member's discord.Permissions in the
+        channel, which Discord sends with the interaction; none unless given."""
+        if permissions is None:
+            permissions = discord.Permissions.none()
+        return FakeInteraction(guild, user, self.state, permissions)
 
 
 @pytest.fixture
@@ -297,12 +302,14 @@ class FakeInteraction:
     handle_message_parameters(): its content, and the call's allowed_mentions merged
     over the client-wide default, as Webhook.send does for a follow-up.
     deferred holds the keyword arguments of response.defer(), or None if it was not called.
+    permissions is the member's discord.Permissions, as Interaction.permissions gives them.
     """
 
-    def __init__(self, guild, user, state):
+    def __init__(self, guild, user, state, permissions):
         self.guild = guild
         self.guild_id = guild.id
         self.user = user
+        self.permissions = permissions
         self.sent = []
         self.payloads = []
         self.deferred = None
