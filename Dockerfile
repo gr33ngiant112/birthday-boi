@@ -8,7 +8,7 @@
 
 # uv 0.12.23 from Astral's official image, pinned to its digest. uv comes from a FROM line of its
 # own because Dependabot's docker updates read only FROM lines, so they bump this one too.
-FROM ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.0@sha256:cdc6093146eb3ff6a40107b38f008b789e050e77ad87865e381d9917da55a168 AS uv
 
 # python:3.11-slim (Python 3.11.17 on Debian 13 when pinned), pinned to its digest. spaCy 3.5.0,
 # which pyproject.toml pins, has wheels for CPython 3.11 at the newest, built for glibc.
