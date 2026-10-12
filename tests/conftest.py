@@ -13,7 +13,8 @@
   request payload (including the effective allowed_mentions) and before any HTTP.
   gateway.interaction() returns a FakeInteraction for slash commands, whose
   responses would go through Discord's webhook endpoints instead; it records the
-  payload discord.py would build for each, and carries the member's permissions.
+  payload discord.py would build for each, embeds included, and the text the member
+  reads in it, and carries the member's permissions.
 """
 
 import copy
@@ -295,14 +296,18 @@ def gateway(monkeypatch):
 
 
 class FakeInteraction:
-    """The parts of discord.Interaction that bot.py's slash commands use.
+    """The parts of discord.Interaction that bot.py's slash commands and its command error
+    handler use.
 
     sent collects (content, kwargs) for every response and follow-up, in order.
     payloads holds, in the same order, the payload discord.py builds for each one with
-    handle_message_parameters(): its content, and the call's allowed_mentions merged
-    over the client-wide default, as Webhook.send does for a follow-up.
+    handle_message_parameters(): its content and embeds, and the call's allowed_mentions
+    merged over the client-wide default, as Webhook.send does for a follow-up.
+    texts() gives, in the same order, what the member reads in each one.
     deferred holds the keyword arguments of response.defer(), or None if it was not called.
     permissions is the member's discord.Permissions, as Interaction.permissions gives them.
+    command is what Interaction.command gives the error handler: the slash command being run,
+    which a test sets, or None for a command the bot does not know.
     """
 
     def __init__(self, guild, user, state, permissions):
@@ -310,6 +315,7 @@ class FakeInteraction:
         self.guild_id = guild.id
         self.user = user
         self.permissions = permissions
+        self.command = None
         self.sent = []
         self.payloads = []
         self.deferred = None
@@ -321,10 +327,22 @@ class FakeInteraction:
         self.sent.append((content, kwargs))
         with discord.http.handle_message_parameters(
             content=discord.utils.MISSING if content is None else content,
+            embed=kwargs.get("embed", discord.utils.MISSING),
+            embeds=kwargs.get("embeds", discord.utils.MISSING),
             allowed_mentions=kwargs.get("allowed_mentions", discord.utils.MISSING),
             previous_allowed_mentions=self._state.allowed_mentions,
         ) as params:
             self.payloads.append(params.payload)
+
+    def texts(self):
+        """What the member reads in each response and follow-up, in order: its content, then the
+        title and the description of each embed, one per line."""
+        texts = []
+        for content, kwargs in self.sent:
+            embeds = [kwargs["embed"]] if kwargs.get("embed") is not None else list(kwargs.get("embeds", []))
+            parts = [content, *(part for embed in embeds for part in (embed.title, embed.description))]
+            texts.append("\n".join(part for part in parts if part))
+        return texts
 
 
 class FakeInteractionResponse:

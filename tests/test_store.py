@@ -35,7 +35,7 @@ def run_view(view, gateway, guild, asker, *args):
         return "\n".join(payload.get("content") or "" for payload in gateway.sent_to(gateway.general(guild)))
     interaction = gateway.interaction(guild, guild.get_member(asker[0]))
     asyncio.run(getattr(bot, view).callback(interaction, *args))
-    return "\n".join(content or "" for content, _ in interaction.sent)
+    return "\n".join(interaction.texts())
 
 
 @pytest.mark.parametrize("view", ["birthday_list", "birthday_upcoming", "monthly post"])
@@ -117,7 +117,7 @@ def test_no_view_reads_with_keys_or_scan(fake_redis, freeze_today, gateway, monk
     ]:
         interaction = gateway.interaction(guild, guild.get_member(ASKER[0]))
         asyncio.run(getattr(bot, command).callback(interaction, *args))
-        texts[command] = "\n".join(content or "" for content, _ in interaction.sent)
+        texts[command] = "\n".join(interaction.texts())
     texts["monthly post"] = run_view("monthly post", gateway, guild, ASKER)
     # Then the paths that delete: ASKER forgets their birthday, and the bot leaves the guild.
     asyncio.run(bot.birthday_forget.callback(gateway.interaction(guild, guild.get_member(ASKER[0]))))

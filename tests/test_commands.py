@@ -1,5 +1,6 @@
-"""#23 and #33: slash commands offered in DMs, Discord's 2000-character message limit,
-answering an interaction before any Redis call, and replies that only the caller sees."""
+"""#23 and #33: slash commands offered in DMs, Discord's 2000-character message limit (#37: and
+its embed limits), answering an interaction before any Redis call, and replies that only the
+caller sees."""
 
 import asyncio
 import datetime
@@ -13,6 +14,7 @@ GUILD_ID = 300000000000005000
 MEMBER = (200000000000002201, "member")
 DM_CONTEXTS = {app_commands.AppCommandContext.DM_CHANNEL, app_commands.AppCommandContext.PRIVATE_CHANNEL}
 DISCORD_MESSAGE_LIMIT = 2000
+DISCORD_EMBED_DESCRIPTION_LIMIT = 4096
 SUBCOMMANDS = ["birthday_set", "birthday_show", "birthday_list", "birthday_upcoming", "birthday_forget"]
 
 
@@ -58,11 +60,14 @@ def test_birthday_list_with_100_users_stays_within_discord_message_limit(fake_re
     asyncio.run(bot.birthday_list.callback(interaction))
 
     lengths = [len(content or "") for content, _ in interaction.sent]
+    # #37: the list is sent as embeds.
+    description_lengths = [len(embed["description"]) for payload in interaction.payloads for embed in payload["embeds"]]
     if not lengths:
         pytest.fail("setup: /birthday list sent nothing")
     assert max(lengths) <= DISCORD_MESSAGE_LIMIT
+    assert max(description_lengths) <= DISCORD_EMBED_DESCRIPTION_LIMIT
     # Split between messages, never dropped or repeated.
-    text = "\n".join(content or "" for content, _ in interaction.sent)
+    text = "\n".join(interaction.texts())
     assert {user_id: text.count(f"<@{user_id}>") for user_id, _ in members} == {user_id: 1 for user_id, _ in members}
 
 
@@ -106,10 +111,10 @@ EVERY_REPLY = [
     pytest.param("birthday_show", "stored", "member", "🎂", id="show"),
     pytest.param("birthday_show", "empty", "member", f"❌ <@{MEMBER[0]}> has not set", id="show, not set"),
     pytest.param("birthday_show", "down", "member", "⚠️ Storage is unavailable.", id="show, storage down"),
-    pytest.param("birthday_list", "stored", (), "🎉 **Server Birthdays:**", id="list"),
+    pytest.param("birthday_list", "stored", (), "🎉 Server Birthdays", id="list"),
     pytest.param("birthday_list", "empty", (), "❌ No birthdays have been set", id="list, none"),
     pytest.param("birthday_list", "down", (), "⚠️ Storage is unavailable.", id="list, storage down"),
-    pytest.param("birthday_upcoming", "stored", (), "🎉 **Upcoming Birthdays:**", id="upcoming"),
+    pytest.param("birthday_upcoming", "stored", (), "🎉 Upcoming Birthdays", id="upcoming"),
     pytest.param("birthday_upcoming", "empty", (), "❌ No birthdays in the next 30 days", id="upcoming, none"),
     pytest.param("birthday_upcoming", "down", (), "⚠️ Storage is unavailable.", id="upcoming, storage down"),
     pytest.param("birthday_forget", "stored", (), "✅ Your birthday has been deleted", id="forget"),
@@ -132,7 +137,7 @@ def test_every_reply_is_ephemeral(command, store, args, reply, fake_redis, freez
 
     asyncio.run(getattr(bot, command).callback(interaction, *((member,) if args == "member" else args)))
 
-    if not interaction.sent or not (interaction.sent[0][0] or "").startswith(reply):
+    if not interaction.sent or not interaction.texts()[0].startswith(reply):
         pytest.fail(f"setup: expected a reply starting {reply!r}, got {interaction.sent!r}")
     assert interaction.deferred is not None
     assert interaction.deferred.get("ephemeral") is True

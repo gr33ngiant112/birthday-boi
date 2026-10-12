@@ -8,6 +8,7 @@ developer's .env is read.
 """
 
 import asyncio
+import logging
 import os
 import time
 import types
@@ -111,29 +112,35 @@ def run_healthcheck(monkeypatch, heartbeat_file=None):
         pytest.param(3600, 1, id="an hour old"),
     ],
 )
-def test_healthcheck_exits_0_for_a_fresh_heartbeat_and_1_for_a_stale_one(age, code, monkeypatch, tmp_path, capsys):
+def test_healthcheck_exits_0_for_a_fresh_heartbeat_and_1_for_a_stale_one(age, code, monkeypatch, tmp_path, caplog):
     heartbeat_file = aged(tmp_path / "heartbeat", age)
+    caplog.set_level(logging.INFO, logger="birthday_boi")
 
     exit_code, run, from_url = run_healthcheck(monkeypatch, heartbeat_file)
 
     assert exit_code == code
-    printed = capsys.readouterr()
+    # #37: the result is a line of the bot's log, which `python bot.py` writes to stderr.
+    [(level, message)] = [(record.levelno, record.getMessage()) for record in caplog.records]
     if code == 0:
-        assert printed.out.startswith(f"Healthy: the heartbeat file {heartbeat_file} is ")
+        assert level == logging.INFO
+        assert message.startswith(f"Healthy: the heartbeat file {heartbeat_file} is ")
     else:
-        assert printed.err.startswith(f"Unhealthy: the heartbeat file {heartbeat_file} is ")
-        assert printed.err.endswith(f" s old, over the {MAX_AGE:.0f} s limit.\n")
+        assert level == logging.ERROR
+        assert message.startswith(f"Unhealthy: the heartbeat file {heartbeat_file} is ")
+        assert message.endswith(f" s old, over the {MAX_AGE:.0f} s limit.")
     run.assert_not_called()
     from_url.assert_not_called()
 
 
-def test_healthcheck_exits_1_when_there_is_no_heartbeat_file(monkeypatch, tmp_path, capsys):
+def test_healthcheck_exits_1_when_there_is_no_heartbeat_file(monkeypatch, tmp_path, caplog):
     heartbeat_file = tmp_path / "heartbeat"
 
     exit_code, run, from_url = run_healthcheck(monkeypatch, heartbeat_file)
 
     assert exit_code == 1
-    assert capsys.readouterr().err == f"Unhealthy: the heartbeat file {heartbeat_file} is missing or unreadable.\n"
+    assert [(record.levelno, record.getMessage()) for record in caplog.records] == [
+        (logging.ERROR, f"Unhealthy: the heartbeat file {heartbeat_file} is missing or unreadable.")
+    ]
     run.assert_not_called()
     from_url.assert_not_called()
 

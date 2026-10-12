@@ -53,4 +53,4 @@ This cleanup runs once, when Discord tells the running bot about the removal, an
 
 Everything the bot stores is kept in the Redis database of whoever runs the bot, at the address in its `REDIS_URL` setting. This repository holds only the code, not any data.
 
-When something goes wrong, the bot prints an error to its log. Some of these messages include user IDs, server IDs or names, and sometimes a stored birthday. The log is kept wherever the person running the bot keeps it.
+When something goes wrong, the bot writes a line to its log that names the members and servers involved by their IDs, and the error by its type, never with a birthday or a name. The log is kept wherever the person running the bot keeps it.

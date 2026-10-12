@@ -79,7 +79,7 @@ def run_command(gateway, guild, user, command, *args):
 
 
 def text_of(interaction):
-    return "\n".join(content or "" for content, _ in interaction.sent)
+    return "\n".join(interaction.texts())
 
 
 def test_monthly_post_lists_only_members_of_that_guild(fake_redis, freeze_today, gateway):
@@ -153,7 +153,8 @@ def test_hostile_display_names_are_never_shown_and_ping_nobody(fake_redis, freez
     views.append(("monthly post", all_ids, gateway.sent_to(gateway.general(guild))))
 
     for view, expected_ids, payloads in views:
-        text = "\n".join(payload.get("content") or "" for payload in payloads)
+        # Every field of the payloads, embeds included (#37).
+        text = rendered(payloads)
         if not all(f"<@{user_id}>" in text for user_id in expected_ids):
             pytest.fail(f"setup: the {view} should list {expected_ids}, got {text!r}")
         for _, name in HOSTILE_MEMBERS:
@@ -204,7 +205,7 @@ def test_birthday_upcoming_answers_only_the_caller(upcoming, fake_redis, freeze_
 
     asyncio.run(bot.birthday_upcoming.callback(interaction, 90))
 
-    sent = [content or "" for content, _ in interaction.sent]
+    sent = interaction.texts()
     if len(sent) != 1 or (f"<@{CAROL[0]}>" in sent[0]) != upcoming:
         pytest.fail(f"setup: expected one follow-up, listing {CAROL[1]} only if upcoming, got {sent!r}")
     assert interaction.deferred is not None
@@ -238,8 +239,8 @@ def test_the_year_and_age_show_only_with_show_age_and_a_year(
     next_birthday = "next birthday Sunday, March 15 2026"
     expected = {
         "show": f"🎂 **<@{CAROL[0]}>'s Birthday:**\nMarch 15{year} - {next_birthday}{', turning 36' if shown else ''}",
-        "list": f"🎉 **Server Birthdays:**\n<@{CAROL[0]}> - March 15{year} - {next_birthday}",
-        "upcoming": f"🎉 **Upcoming Birthdays:**\n<@{CAROL[0]}> - Sunday, March 15{' - turning 36' if shown else ''}",
+        "list": f"🎉 Server Birthdays\n<@{CAROL[0]}> - March 15{year} - {next_birthday}",
+        "upcoming": f"🎉 Upcoming Birthdays\n<@{CAROL[0]}> - Sunday, March 15{' - turning 36' if shown else ''}",
     }
     assert text == expected[view]
     if not shown:

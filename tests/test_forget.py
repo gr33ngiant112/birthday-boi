@@ -40,7 +40,7 @@ def replies(interaction):
 
 
 def text_of(interaction):
-    return "\n".join(content or "" for content, _ in interaction.sent)
+    return "\n".join(interaction.texts())
 
 
 def guilds_of(user):
