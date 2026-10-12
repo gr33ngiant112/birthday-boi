@@ -4,55 +4,16 @@
 
 ### Developing
 
-1. Install pyenv
-
-```bash
-git clone https://github.com/pyenv/pyenv.git ~/.pyenv
-echo 'export PATH="$HOME/.pyenv/bin:$PATH"' >> ~/.bashrc
-echo 'eval "$(pyenv init --path)"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-2. Install python 3.11 and set it globally. Make sure you have glibc and dependent tooling available to build a Python distribution. If you have trouble building Python, You can find solutions to common issues with installing these tools [here](https://github.com/pyenv/pyenv/wiki/Common-build-problems)
-
-```bash
-# If you're on ubuntu, you'll need these packages
-sudo apt-get update
-sudo apt-get install \
-    build-essential \
-    libssl-dev \
-    zlib1g-dev \
-    libbz2-dev \
-    libreadline-dev \
-    libsqlite3-dev \
-    libffi-dev \
-    liblzma-dev \
-    tk-dev \
-    libgdbm-dev \
-    libncurses5-dev \
-    libncursesw5-dev \
-    xz-utils \
-    libexpat1-dev \
-    libdb5.3-dev \
-    libmpdec-dev \
-    libtinfo-dev \
-    uuid-dev \
-    libgmp-dev
-
-# Install python3 and set it globally
-pyenv install 3.11
-pyenv global 3.11
-exec zsh # or bash
-```
-
-3. Install [uv](https://docs.astral.sh/uv/getting-started/installation/). Then create the virtual environment `.venv` with the packages that `uv.lock` pins, the dev tools included, and activate it:
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/), and [Docker](https://docs.docker.com/engine/install/) with the Compose plugin for the local Redis. Python comes with uv: it uses Python 3.11 (`.python-version`) and downloads it if this machine doesn't have it.
+2. In your clone of this repository, create the virtual environment `.venv` with the packages that `uv.lock` pins, the dev tools included, and activate it:
 
 ```bash
 uv sync --locked
 source .venv/bin/activate
 ```
 
-4. Run `pre-commit install`. Before each commit, the hooks run `ruff check`, `ruff format --check` and the command registry test with this venv's ruff and pytest, so commit with the venv active. `ruff format .` fixes what the format check finds.
+3. Run `pre-commit install`. Before each commit, the hooks run `ruff check`, `ruff format --check` and the command registry test with this venv's ruff and pytest, so commit with the venv active. `ruff format .` fixes what the format check finds.
+4. Run the tests with `pytest -q`. They need no network, Redis or Discord token.
 
 ### Building and testing the Docker image
 
@@ -68,7 +29,9 @@ The first command builds the bot's image. The second builds the test image: the 
 
 ### Installing
 
-1. Register the bot as a discord app [here](https://discord.com/developers/applications). Remember to _save the token_.
+1. Create an application in the Discord [Developer Portal](https://discord.com/developers/applications). For development, use a separate application, as "Running against a test server" explains.
+2. On the application's Bot page, choose Reset Token and copy the token: it goes in `DISCORD_TOKEN` (see "Running"). Leave the privileged intents off.
+3. Invite the bot to a server, as below.
 
 ### Inviting the bot
 
@@ -85,15 +48,22 @@ https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot%20applicati
 
 ### Running
 
-`python bot.py`, the Procfile's `worker` command, reads `DISCORD_TOKEN` and `REDIS_URL` from the environment; when `DYNO` is not set (a local run), it loads them from a `.env` file first. Before it logs in to Discord, the bot sends Redis a PING. If Redis does not answer, the bot exits with status 1 and prints the reason, so start Redis first and check `REDIS_URL`. For a `rediss://` server with a self-signed certificate, such as Heroku's, set `REDIS_TLS_INSECURE=1`, or the certificate check fails and the bot does not start.
+`python bot.py`, the Procfile's `worker` command, reads its settings from the environment; when `DYNO` is not set (a local run), it loads them from a `.env` file first. `cp .env.example .env` gives you one to fill in:
+
+- `DISCORD_TOKEN`, required: the bot's token, from the application's Bot page.
+- `REDIS_URL`, required: where Redis listens. `redis://127.0.0.1:6379/0` is the local Redis from `compose.dev.yaml`.
+- `DEV_GUILD_ID`, optional: a test server's ID (see "Running against a test server").
+- `REDIS_TLS_INSECURE`, optional, for `rediss://` URLs only: the bot checks the server's certificate unless this is `1`. A server with a self-signed certificate, such as Heroku's, needs `REDIS_TLS_INSECURE=1`, or the certificate check fails and the bot does not start.
+
+If `DISCORD_TOKEN` or `REDIS_URL` is missing or empty, the bot exits with status 1 and a line that names it, before it contacts Redis or Discord. Before it logs in to Discord, the bot sends Redis a PING. If Redis does not answer, the bot exits with status 1 and prints the reason, so start Redis first and check `REDIS_URL`.
 
 ### Running against a test server
 
 Use a separate Discord application for development, and keep its token as the only token in your local `.env`. The bot loads `.env` itself, so a local run, a test or a tool can use any token in it. Never put the production token there.
 
-1. Start a local Redis with `docker compose -f compose.dev.yaml up -d`. It listens on 127.0.0.1:6379 only. To use another host port, set `REDIS_PORT` and use the same port in `REDIS_URL`.
-2. In `.env`, set `DISCORD_TOKEN` to the development application's token, `REDIS_URL=redis://127.0.0.1:6379/0`, and `DEV_GUILD_ID` to your test server's ID. To copy the ID, turn on Developer Mode in Discord's Advanced settings, right-click the server and choose Copy Server ID.
-3. Run `python bot.py`. The bot copies its slash commands to the `DEV_GUILD_ID` server and syncs them there, where they show up at once.
+1. Run `cp .env.example .env`. In `.env`, set `DISCORD_TOKEN` to the development application's token and `DEV_GUILD_ID` to your test server's ID; `REDIS_URL` already points at the Redis of the next step. To copy the ID, turn on Developer Mode in Discord's Advanced settings, right-click the server and choose Copy Server ID.
+2. Start a local Redis with `docker compose -f compose.dev.yaml up -d`. It listens on 127.0.0.1:6379 only. To use another host port, set `REDIS_PORT` in `.env`, where Compose reads it too, and use the same port in `REDIS_URL`.
+3. Run `python bot.py` with the venv active. The bot copies its slash commands to the `DEV_GUILD_ID` server and syncs them there, where they show up at once.
 
 `docker compose -f compose.dev.yaml down` stops Redis; add `-v` to delete its data.
 
