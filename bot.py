@@ -522,7 +522,8 @@ async def list_birthdays(interaction: discord.Interaction):
             next_birthday = next_occurrence(birthdate.month, birthdate.day, today)
 
             lines.append(
-                f"<@{user_id}> - {birthdate.strftime('%m-%d-%Y')} - next birthday {next_birthday.strftime('%A, %B %d %Y')}"
+                f"<@{user_id}> - {birthdate.strftime('%m-%d-%Y')} - "
+                f"next birthday {next_birthday.strftime('%A, %B %d %Y')}"
             )
         except Exception as e:
             print(f"❌ Error processing birthday for user {user_id}: {e}")
@@ -639,7 +640,8 @@ def main(argv=()):
         asyncio.run(ping_redis())
     except redis.RedisError as e:
         sys.exit(
-            f"Cannot start: Redis did not answer a PING. Check REDIS_URL and that Redis is running. {type(e).__name__}: {e}"
+            "Cannot start: Redis did not answer a PING. Check REDIS_URL and that Redis is running. "
+            f"{type(e).__name__}: {e}"
         )
 
     # Run the bot
