@@ -156,3 +156,56 @@ def test_a_set_date_is_stored_and_read_back_or_refused_if_it_does_not_exist(mont
     stored = core.stored_birthday(core.birthday_as_date(month, day, year), with_year=year is not None)
 
     assert core.parse_birthday(stored) == (month, day, year)
+
+
+@settings(max_examples=300, deadline=None)
+@given(month_day=month_days, date=todays)
+# Feb 29 falls on Feb 28 in 2027 and 2100, which have no Feb 29, and not in 2028, which has one;
+# the year's last and first days.
+@example(month_day=(2, 29), date=datetime.date(2027, 2, 28))
+@example(month_day=(2, 29), date=datetime.date(2100, 2, 28))
+@example(month_day=(2, 29), date=datetime.date(2028, 2, 28))
+@example(month_day=(2, 29), date=datetime.date(2028, 2, 29))
+@example(month_day=(2, 28), date=datetime.date(2027, 2, 28))
+@example(month_day=(12, 31), date=datetime.date(2026, 12, 31))
+@example(month_day=(1, 1), date=datetime.date(2027, 1, 1))
+def test_a_daily_greeting_falls_on_the_birthday_or_feb_28_for_feb_29(month_day, date):
+    # #34: the day the daily greeting names a member.
+    month, day = month_day
+
+    assert core.falls_on(month, day, date) == falls_on(month, day, date)
+
+
+@settings(max_examples=100, deadline=None)
+@given(month_day=month_days, year=st.integers(1900, 2100))
+@example(month_day=(2, 29), year=1900)
+@example(month_day=(2, 29), year=2000)
+@example(month_day=(2, 29), year=2027)
+def test_every_birthday_gets_one_daily_greeting_a_year(month_day, year):
+    month, day = month_day
+    days_in_year = 366 if calendar.isleap(year) else 365
+    dates = [datetime.date(year, 1, 1) + n * ONE_DAY for n in range(days_in_year)]
+
+    assert len([date for date in dates if core.falls_on(month, day, date)]) == 1
+
+
+def test_every_time_of_day_is_read_from_hh_mm_and_stored_as_it():
+    # /birthday config's time option, with or without the hour's leading zero.
+    for hour in range(24):
+        for minute in range(60):
+            for text in (f"{hour:02d}:{minute:02d}", f"{hour}:{minute:02d}"):
+                time_of_day = core.parse_time_of_day(text)
+                assert time_of_day == datetime.time(hour, minute), text
+                assert core.format_time_of_day(time_of_day) == f"{hour:02d}:{minute:02d}"
+
+
+@settings(max_examples=300, deadline=None)
+@given(text=st.one_of(st.text(max_size=8), st.from_regex(r"\s?[0-9]{1,3}:[0-9]{1,3}\s?", fullmatch=True)))
+@example(text="24:00")
+@example(text="09:60")
+@example(text="٠٩:٣٠")  # Arabic-Indic digits
+@example(text="9:5")
+def test_a_time_of_day_is_read_only_from_24_hour_hh_mm(text):
+    time_of_day = core.parse_time_of_day(text)
+
+    assert time_of_day is None or core.format_time_of_day(time_of_day) == text.strip().zfill(5)
