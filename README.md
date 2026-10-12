@@ -2,6 +2,18 @@
 
 ## A Discord bot that remembers your birthday and everyone elses.
 
+### Commands
+
+The commands work in servers only, never in DMs, and only the member who runs one sees the answer.
+
+- `/birthday set month day [year] [show_age]`: set your birthday and share it with this server. Pick the month from the list and type the day; the year is optional. Others see only the month and day, unless you give the year and turn on `show_age`.
+- `/birthday show member`: a member's birthday, if they shared it with this server. For a member who gave the year and turned on `show_age`, it also shows the year and the age they turn next.
+- `/birthday list`: the birthdays shared with this server, with the year for members who gave it and turned on `show_age`.
+- `/birthday upcoming [days]`: the birthdays from today to 30 days ahead, or to `days` days ahead (1 to 366), with the age they turn for members who gave the year and turned on `show_age`.
+- `/birthday forget`: delete your birthday from every server.
+
+On the 1st of each month at 15:00 UTC, the bot posts the birthdays of that month and the next two in each server's #general, with the month and day only.
+
 ### Developing
 
 1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/), and [Docker](https://docs.docker.com/engine/install/) with the Compose plugin for the local Redis. Python comes with uv: it uses Python 3.12 (`.python-version`) and downloads it if this machine doesn't have it.
@@ -38,11 +50,11 @@ The first command builds the bot's image. The second builds the test image: the 
 Invite the bot with only the access it uses. Replace `<CLIENT_ID>` with your application's client ID from the Developer Portal:
 
 ```
-https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot%20applications.commands&permissions=68608
+https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot%20applications.commands&permissions=3072
 ```
 
 - Scopes: `bot` and `applications.commands` (the slash commands).
-- Permissions: View Channels, Send Messages and Read Message History (`68608`). The bot replies to mentions and posts the monthly list in #general, and Discord requires Read Message History to reply to a message.
+- Permissions: View Channels and Send Messages (`3072`), for the monthly list in #general. The answers to slash commands need no channel permission.
 - Never grant Administrator or Mention Everyone; the bot needs neither.
 - On the Developer Portal's Bot page, leave the Message Content and Server Members privileged intents off. `bot.py` uses `discord.Intents.default()`, which requests neither.
 
@@ -71,6 +83,8 @@ Use a separate Discord application for development, and keep its token as the on
 
 Without `--sync`, a start changes the slash commands only in the `DEV_GUILD_ID` server, if one is set. After a release that adds, removes or changes a slash command, start the bot once with `python bot.py --sync`: it replaces the commands in every server with this build's, then runs as usual. A command missing from the build disappears from every server, so check the command list before you sync. Don't use `--sync` with the development token: the test server would then list each command twice, once from the global sync and once from `DEV_GUILD_ID`.
 
+The `/birthday` group renamed every command: it replaced `/set_birthday`, `/get_birthday`, `/list_birthdays`, `/forecast_birthdays` and `/forget_birthday`. So after deploying the first version with `/birthday`, start the bot once with `python bot.py --sync`. Until then, every server keeps offering the old commands, which the bot no longer answers, and no server offers `/birthday`.
+
 ### Privacy
 
-[PRIVACY.md](PRIVACY.md) describes what the bot stores, who can see it, and how to delete it. To delete your birthday, run `/forget_birthday` in any server the bot shares with you.
+[PRIVACY.md](PRIVACY.md) describes what the bot stores, who can see it, and how to delete it. To delete your birthday, run `/birthday forget` in any server the bot shares with you.
