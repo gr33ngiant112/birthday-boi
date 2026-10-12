@@ -103,7 +103,7 @@ def test_main_runs_client_with_token_from_env(monkeypatch):
     ):
         bot.main()
 
-    run.assert_called_once_with(bot.client, FAKE_TOKEN)
+    run.assert_called_once_with(bot.client, FAKE_TOKEN, log_handler=None)
     load_dotenv.assert_called_once_with()
     assert isinstance(bot.redis_client, redis.asyncio.Redis)
     assert bot.redis_client.connection_pool.connection_kwargs["host"] == "localhost"
@@ -128,7 +128,7 @@ def test_main_loads_dotenv_before_reading_config(monkeypatch):
         bot.main()
 
     load_dotenv.assert_called_once_with()
-    run.assert_called_once_with(bot.client, FAKE_TOKEN)
+    run.assert_called_once_with(bot.client, FAKE_TOKEN, log_handler=None)
 
 
 def test_main_loads_dotenv_even_where_dyno_is_set(monkeypatch):
@@ -147,7 +147,7 @@ def test_main_loads_dotenv_even_where_dyno_is_set(monkeypatch):
         bot.main()
 
     load_dotenv.assert_called_once_with()
-    run.assert_called_once_with(bot.client, FAKE_TOKEN)
+    run.assert_called_once_with(bot.client, FAKE_TOKEN, log_handler=None)
 
 
 def test_main_keeps_the_environment_over_a_dotenv_file(monkeypatch, tmp_path):
@@ -175,7 +175,7 @@ def test_main_keeps_the_environment_over_a_dotenv_file(monkeypatch, tmp_path):
 
     if load_dotenv.call_count != 1 or os.environ.get("DEV_GUILD_ID") != "300000000000019000":
         pytest.fail(f"setup: main() should load the file once, got {load_dotenv.call_args_list!r}")
-    run.assert_called_once_with(bot.client, FAKE_TOKEN)
+    run.assert_called_once_with(bot.client, FAKE_TOKEN, log_handler=None)
     assert bot.redis_client.connection_pool.connection_kwargs["host"] == "localhost"
     assert bot.DEV_GUILD_ID == 300000000000019000
 
@@ -200,7 +200,7 @@ def test_running_bot_py_as_a_script_calls_main(monkeypatch):
     with mock.patch.object(discord.Client, "run", autospec=True) as run:
         namespace = run_bot_py(monkeypatch)
 
-    run.assert_called_once_with(namespace["client"], FAKE_TOKEN)
+    run.assert_called_once_with(namespace["client"], FAKE_TOKEN, log_handler=None)
     assert namespace["SYNC_COMMANDS"] is False
 
 
@@ -208,7 +208,7 @@ def test_bot_py_sync_turns_on_the_global_sync(monkeypatch):
     with mock.patch.object(discord.Client, "run", autospec=True) as run:
         namespace = run_bot_py(monkeypatch, "--sync")
 
-    run.assert_called_once_with(namespace["client"], FAKE_TOKEN)
+    run.assert_called_once_with(namespace["client"], FAKE_TOKEN, log_handler=None)
     assert namespace["SYNC_COMMANDS"] is True
 
 
@@ -234,7 +234,7 @@ def test_main_reads_the_development_server_from_dev_guild_id(monkeypatch, value,
     with mock.patch.object(discord.Client, "run", autospec=True) as run, stub_redis_ping(), no_dotenv(bot):
         bot.main()
 
-    run.assert_called_once_with(bot.client, FAKE_TOKEN)
+    run.assert_called_once_with(bot.client, FAKE_TOKEN, log_handler=None)
     assert expected == bot.DEV_GUILD_ID
 
 
@@ -373,7 +373,7 @@ def test_main_pings_redis_with_a_client_of_its_own(monkeypatch):
     monkeypatch.setattr(redis.asyncio.ConnectionPool, "get_connection", get_connection_noting_it)
     at_run = {}
 
-    def run(client, token):
+    def run(client, token, **kwargs):
         at_run["pools"] = [pool for pool, _ in taken]
         at_run["still connected"] = [connection.is_connected for _, connection in taken]
         # The bot's first Redis command, in a new event loop as client.run() would start.
@@ -382,7 +382,7 @@ def test_main_pings_redis_with_a_client_of_its_own(monkeypatch):
     with mock.patch.object(discord.Client, "run", autospec=True, side_effect=run) as client_run, no_dotenv(bot):
         bot.main()
 
-    client_run.assert_called_once_with(bot.client, FAKE_TOKEN)
+    client_run.assert_called_once_with(bot.client, FAKE_TOKEN, log_handler=None)
     assert len(at_run["pools"]) == 1  # the startup PING
     assert at_run["pools"][0] is not bot.redis_client.connection_pool
     assert at_run["still connected"] == [False]

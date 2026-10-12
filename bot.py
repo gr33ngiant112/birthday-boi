@@ -5,6 +5,7 @@ import ssl
 from discord.ext import tasks
 from discord import app_commands
 import discord
+import aiohttp
 from dotenv import load_dotenv
 import datetime
 import calendar
@@ -68,8 +69,9 @@ MONTHLY_POST_TIME = datetime.time(hour=15, tzinfo=datetime.UTC)
 # A guild's monthly post is marked in Redis for this long: past the end of its month.
 MONTHLY_POST_MARKER_TTL = datetime.timedelta(days=40)
 
-# Errors are logged here. A log line never includes a birth date.
-log = logging.getLogger(__name__)
+# The bot's log, by a name of its own: run as `python bot.py`, __name__ would be "__main__". A log
+# line names members and servers by ID and errors by type, never with a birth date or a name.
+log = logging.getLogger("birthday_boi")
 
 # What a member is told when Redis fails.
 SAVE_FAILED = "⚠️ Storage is unavailable, so your birthday was not saved. Please try again later."
@@ -216,8 +218,13 @@ async def check_upcoming_birthdays():
                 upcoming_bd = core.monthly_post_occurrence(month, day, today)
                 if upcoming_bd is not None:
                     upcoming.append((upcoming_bd, user_id))
-            except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the post; #37 narrows this
-                print(f"❌ Error processing birthday for user {user_id}: {e}")
+            except ValueError as e:  # a stored date that cannot be read; it must not stop the post
+                log.warning(
+                    "Skipped user %s in the monthly post of guild %s: unreadable stored birthday (%s)",
+                    user_id,
+                    guild.id,
+                    type(e).__name__,
+                )
 
         if not upcoming:
             continue
@@ -236,8 +243,11 @@ async def check_upcoming_birthdays():
         try:
             for chunk in core.chunk_messages("🎉 **Upcoming Birthdays:**", lines):
                 await channel.send(chunk)
-        except Exception as e:  # noqa: BLE001 - a failed send must not stop the other guilds' posts; #37 narrows this
-            print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
+        # Discord refused the post (HTTPException, such as Forbidden without permission to write in
+        # #general), or the connection failed (aiohttp's errors and OSError, which discord.py raises
+        # once its retries run out). The other guilds still get their posts.
+        except (discord.HTTPException, aiohttp.ClientError, OSError) as e:
+            log.error("The monthly post failed to send in guild %s (%s)", guild.id, type(e).__name__)
 
 
 # Before READY the bot has no guilds, so a run would post nowhere. A bot that becomes ready
@@ -266,12 +276,12 @@ class MyClient(discord.Client):
             dev_guild = discord.Object(id=DEV_GUILD_ID)
             self.tree.copy_global_to(guild=dev_guild)
             await self.tree.sync(guild=dev_guild)
-            print(f"✅ Slash commands synced to the development server {DEV_GUILD_ID}.")
+            log.info("Slash commands synced to the development server %s", DEV_GUILD_ID)
         # A global sync replaces the commands in every server, so a build that is missing a
         # command deletes it everywhere: it runs only when asked.
         if SYNC_COMMANDS:
             await self.tree.sync()
-            print("✅ Slash commands synced globally.")
+            log.info("Slash commands synced globally")
         # Start the upcoming birthdays task after commands are synced.
         check_upcoming_birthdays.start()
         heartbeat.start()
@@ -284,7 +294,7 @@ client = MyClient()
 # Event listener for when the bot has connected
 @client.event
 async def on_ready():
-    print(f"✅ Logged in as {client.user}")
+    log.info("Logged in as %s (ID %s)", client.user, client.user.id)
 
 
 # Called when the bot is removed from a guild: kicked, banned or left, or the guild was
@@ -388,11 +398,26 @@ async def birthday_show(interaction: discord.Interaction, member: discord.Member
                 f"next birthday {core.format_occurrence(next_birthday, with_year=True)}{age}",
                 ephemeral=True,
             )
-        except Exception as e:  # noqa: BLE001 - the member gets an error reply, not silence; #37 narrows this
-            print(f"❌ Error processing birthday for user {user_id}: {e}")
+        except ValueError as e:  # a stored date that cannot be read; the member gets an error reply, not silence
+            log.error(
+                "Unreadable stored birthday of user %s in /birthday show in guild %s (%s)",
+                user_id,
+                interaction.guild_id,
+                type(e).__name__,
+            )
             await interaction.followup.send("❌ An error occurred while retrieving the birthday.", ephemeral=True)
     else:
         await interaction.followup.send(f"❌ {member.mention} has not set their birthday yet.", ephemeral=True)
+
+
+# A list's lines as the embeds of its reply, one per message, under the title on the first
+# (core.chunk_embeds keeps each within Discord's limits). The client's AllowedMentions.none() goes
+# with every message, so the <@id> mentions ping nobody.
+def embeds_of(title, lines):
+    return [
+        discord.Embed(title=embed_title, description=description)
+        for embed_title, description in core.chunk_embeds(title, lines)
+    ]
 
 
 # List this server's birthdays
@@ -420,12 +445,17 @@ async def birthday_list(interaction: discord.Interaction):
                 f"<@{user_id}> - {core.format_birthday(month, day, year if show_age else None)} - "
                 f"next birthday {core.format_occurrence(next_birthday, with_year=True)}"
             )
-        except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the list; #37 narrows this
-            print(f"❌ Error processing birthday for user {user_id}: {e}")
+        except ValueError as e:  # a stored date that cannot be read; it must not stop the list
+            log.warning(
+                "Skipped user %s in /birthday list in guild %s: unreadable stored birthday (%s)",
+                user_id,
+                interaction.guild_id,
+                type(e).__name__,
+            )
 
     if lines:
-        for chunk in core.chunk_messages("🎉 **Server Birthdays:**", lines):
-            await interaction.followup.send(chunk, ephemeral=True)
+        for embed in embeds_of("🎉 Server Birthdays", lines):
+            await interaction.followup.send(embed=embed, ephemeral=True)
     else:
         await interaction.followup.send("❌ No birthdays have been set yet.", ephemeral=True)
 
@@ -459,8 +489,13 @@ async def birthday_upcoming(
                 # The age on the next birthday, only if the member opted in and gave a year
                 age = core.age_on(year, upcoming_bd) if show_age and year is not None else None
                 upcoming_birthdays.append((user_id, upcoming_bd, age))
-        except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the list; #37 narrows this
-            print(f"❌ Error processing birthday for user {user_id}: {e}")
+        except ValueError as e:  # a stored date that cannot be read; it must not stop the list
+            log.warning(
+                "Skipped user %s in /birthday upcoming in guild %s: unreadable stored birthday (%s)",
+                user_id,
+                interaction.guild_id,
+                type(e).__name__,
+            )
 
     if upcoming_birthdays:
         # One line per member. <@id> shows the member's name without the member cache.
@@ -468,8 +503,8 @@ async def birthday_upcoming(
             f"<@{user_id}> - {core.format_occurrence(upcoming_bd)}" + ("" if age is None else f" - turning {age}")
             for user_id, upcoming_bd, age in upcoming_birthdays
         ]
-        for chunk in core.chunk_messages("🎉 **Upcoming Birthdays:**", lines):
-            await interaction.followup.send(chunk, ephemeral=True)
+        for embed in embeds_of("🎉 Upcoming Birthdays", lines):
+            await interaction.followup.send(embed=embed, ephemeral=True)
     else:
         await interaction.followup.send(
             f"❌ No birthdays in the next {days} {'day' if days == 1 else 'days'}.", ephemeral=True
@@ -483,7 +518,7 @@ async def birthday_forget(interaction: discord.Interaction):
     try:
         forgotten = await forget_birthday_redis(interaction.user.id)
     except redis.RedisError as e:
-        print(f"❌ Error deleting a birthday: {e}")
+        log.error("Storage unavailable in /birthday forget (%s)", type(e).__name__)
         await interaction.followup.send(
             "❌ Your birthday could not be deleted. Please try again later.", ephemeral=True
         )
@@ -498,6 +533,28 @@ async def birthday_forget(interaction: discord.Interaction):
 
 # The group and its five subcommands are the bot's only slash commands.
 client.tree.add_command(birthday_group)
+
+# What a member is told when a command fails with an error it does not handle.
+COMMAND_FAILED = "❌ Something went wrong. Please try again later."
+
+
+# discord.py calls this when a slash command raises an error, in place of its own handler, which
+# logs the traceback: the messages there can quote a stored birthday (see StoreUnavailable). This
+# logs one line, with the command, the server's ID and the error's type, and tells the member, in a
+# reply only they see. A command that has already deferred or replied gets a follow-up.
+@client.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandInvokeError):
+        error = error.original  # the error the command's code raised
+    command = interaction.command.qualified_name if interaction.command is not None else None
+    log.error("Command failed: command=%r guild=%s error=%s", command, interaction.guild_id, type(error).__name__)
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(COMMAND_FAILED, ephemeral=True)
+        else:
+            await interaction.response.send_message(COMMAND_FAILED, ephemeral=True)
+    except discord.HTTPException as e:  # such as NotFound once the interaction has expired
+        log.error("Error reply failed: command=%r guild=%s error=%s", command, interaction.guild_id, type(e).__name__)
 
 
 # The heartbeat, for the Docker HEALTHCHECK (#35): a gateway bot has no port to probe, so the
@@ -553,6 +610,16 @@ def main(argv=()):
     args = parser.parse_args(argv)
     SYNC_COMMANDS = args.sync
 
+    # Log lines go to stderr, this module's and discord.py's alike, in discord.py's format, from
+    # INFO up. basicConfig() does nothing where logging is set up already, as under pytest, and
+    # client.run() below is told not to add a handler of its own, which would repeat its lines.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[{asctime}] [{levelname:<8}] {name}: {message}",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        style="{",
+    )
+
     # The settings come from the environment, after load_dotenv() adds those in a .env file if
     # there is one. It never overrides a variable that is already set, so in a container the
     # env_file's values win; the image has no .env (.dockerignore).
@@ -563,9 +630,9 @@ def main(argv=()):
         if age is None or age >= HEARTBEAT_MAX_AGE.total_seconds():
             limit = HEARTBEAT_MAX_AGE.total_seconds()
             state = "is missing or unreadable" if age is None else f"is {age:.0f} s old, over the {limit:.0f} s limit"
-            print(f"Unhealthy: the heartbeat file {HEARTBEAT_FILE} {state}.", file=sys.stderr)
+            log.error("Unhealthy: the heartbeat file %s %s.", HEARTBEAT_FILE, state)
             sys.exit(1)
-        print(f"Healthy: the heartbeat file {HEARTBEAT_FILE} is {age:.0f} s old.")
+        log.info("Healthy: the heartbeat file %s is %.0f s old.", HEARTBEAT_FILE, age)
         sys.exit(0)
     TOKEN = os.getenv("DISCORD_TOKEN")
     REDIS_URL = os.getenv("REDIS_URL")
@@ -596,8 +663,8 @@ def main(argv=()):
             f"{type(e).__name__}: {e}"
         )
 
-    # Run the bot
-    client.run(TOKEN)
+    # Run the bot. Logging is set up above.
+    client.run(TOKEN, log_handler=None)
 
 
 if __name__ == "__main__":

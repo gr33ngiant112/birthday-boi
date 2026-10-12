@@ -1,6 +1,7 @@
 """Dates and rendering for bot.py (#32). Every date the bot computes comes from here: the next
 birthday, the windows of /birthday upcoming and the monthly post, ages, the birth-year range,
-the stored forms of a birthday and how replies show dates; and the splitting of long replies.
+the stored forms of a birthday and how replies show dates; and the splitting of long replies
+into messages and embeds (#37).
 
 Plain functions of their arguments: this module imports neither discord nor redis and never
 reads the clock. bot.py reads today's date and passes it in.
@@ -12,6 +13,12 @@ import datetime
 # Discord rejects messages longer than this.
 MESSAGE_LIMIT = 2000
 
+# Discord rejects an embed whose description is longer than this, and a message whose embeds hold
+# more than 6000 characters together (https://docs.discord.com/developers/resources/message,
+# "Embed Limits"). Two full descriptions exceed 6000, so a reply sends one embed per message: its
+# title (Discord allows 256 characters) and description stay far below 6000.
+EMBED_DESCRIPTION_LIMIT = 4096
+
 # A birth year may be at most this many years before the current year.
 MAX_AGE_YEARS = 120
 
@@ -19,16 +26,30 @@ MAX_AGE_YEARS = 120
 LEAP_YEAR = 2000
 
 
-# Split a header and lines into messages of at most MESSAGE_LIMIT characters,
-# never splitting a line. Every line is a mention and a date, far below the limit.
-def chunk_messages(header, lines):
-    chunks = [header]
+# Join lines, one per row, into chunks of at most `limit` characters, never splitting a line.
+# Every line is a mention and a date, far below the limits.
+def chunk_lines(lines, limit):
+    chunks = []
     for line in lines:
-        if len(chunks[-1]) + 1 + len(line) > MESSAGE_LIMIT:
-            chunks.append(line)
-        else:
+        if chunks and len(chunks[-1]) + 1 + len(line) <= limit:
             chunks[-1] += "\n" + line
+        else:
+            chunks.append(line)
     return chunks
+
+
+# Split a header and lines into messages of at most MESSAGE_LIMIT characters,
+# never splitting a line.
+def chunk_messages(header, lines):
+    return chunk_lines([header, *lines], MESSAGE_LIMIT)
+
+
+# Split a title and lines into the embeds of a reply, one per message: (title, description) pairs,
+# with the title on the first only and descriptions of at most EMBED_DESCRIPTION_LIMIT characters,
+# never splitting a line. No lines, no embeds.
+def chunk_embeds(title, lines):
+    descriptions = chunk_lines(lines, EMBED_DESCRIPTION_LIMIT)
+    return [(title if index == 0 else None, description) for index, description in enumerate(descriptions)]
 
 
 # The first date on or after today with this month and day. A Feb 29 birthday falls
