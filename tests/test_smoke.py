@@ -233,7 +233,9 @@ def test_main_pings_redis_with_a_client_of_its_own(monkeypatch):
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
     bot, _ = import_fresh_bot(monkeypatch)
     server = fakeredis.FakeServer()
-    monkeypatch.setattr(bot, "create_redis_client", lambda: fakeredis.FakeAsyncRedis(server=server, decode_responses=True))
+    monkeypatch.setattr(
+        bot, "create_redis_client", lambda: fakeredis.FakeAsyncRedis(server=server, decode_responses=True)
+    )
     taken = []  # (pool, connection) for each connection taken, in order
     get_connection = redis.asyncio.ConnectionPool.get_connection
 

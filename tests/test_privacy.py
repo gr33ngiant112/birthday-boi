@@ -189,7 +189,9 @@ def test_monthly_post_shows_no_birth_year_or_age(fake_redis, freeze_today, gatew
     asyncio.run(bot.check_upcoming_birthdays())
 
     post = "\n".join(payload.get("content") or "" for payload in gateway.sent_to(gateway.general(guild)))
-    if not all(f"<@{user_id}>" in post and birthday.strftime("%B %d") in post for user_id, _, birthday in MONTHLY_MEMBERS):
+    if not all(
+        f"<@{user_id}>" in post and birthday.strftime("%B %d") in post for user_id, _, birthday in MONTHLY_MEMBERS
+    ):
         pytest.fail(f"setup: the post should list each member with the month and day, got {post!r}")
     for _, _, birthday in MONTHLY_MEMBERS:
         age = 2026 - birthday.year

@@ -62,7 +62,9 @@ def shown_in(gateway, fake_redis, guild, asker, member):
     # it posts as the first run of the month does.
     fake_redis.clear_monthly_post_markers()
     asyncio.run(bot.check_upcoming_birthdays())
-    shown["monthly post"] = "\n".join(payload.get("content") or "" for payload in gateway.sent_to(gateway.general(guild)))
+    shown["monthly post"] = "\n".join(
+        payload.get("content") or "" for payload in gateway.sent_to(gateway.general(guild))
+    )
     return shown
 
 
@@ -158,7 +160,9 @@ def test_no_view_shows_the_birthday_after_forget_birthday(fake_redis, freeze_tod
 
     if any(month_and_day not in text for shown in before.values() for text in shown.values()):
         pytest.fail(f"setup: every view should show the birthday before /forget_birthday, got {before!r}")
-    assert [(guild_id, view) for guild_id, shown in after.items() for view, text in shown.items() if month_and_day in text] == []
+    assert [
+        (guild_id, view) for guild_id, shown in after.items() for view, text in shown.items() if month_and_day in text
+    ] == []
 
 
 def test_forget_birthday_with_nothing_stored_says_so(fake_redis, gateway):

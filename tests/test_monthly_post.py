@@ -233,7 +233,11 @@ def test_the_task_runs_at_15_utc_and_posts_on_the_1st_in_utc(
         await become_ready()
         at_ready = (bot.check_upcoming_birthdays.next_iteration, list(runs), list(gateway.sent))
         await run_at(clock, runs_at, runs)
-        after = (list(runs), [len(posts(gateway, guild)) for guild in guilds], bot.check_upcoming_birthdays.next_iteration)
+        after = (
+            list(runs),
+            [len(posts(gateway, guild)) for guild in guilds],
+            bot.check_upcoming_birthdays.next_iteration,
+        )
         await stop_bot()
         return at_ready, after
 
@@ -350,8 +354,12 @@ def test_a_guild_whose_post_cannot_be_marked_is_skipped_and_logged(fake_redis, f
     # Redis refuses the write of guild A's marker, and only that write, as it refuses writes
     # when it is out of memory; fakeredis does not emulate that, so an ACL stands in.
     fake_redis.acl_setuser(
-        "default", enabled=True, nopass=True, reset_keys=True,
-        keys=["guild:*", "user:*", f"announce:{GUILD_B}:*"], commands=["+@all"],
+        "default",
+        enabled=True,
+        nopass=True,
+        reset_keys=True,
+        keys=["guild:*", "user:*", f"announce:{GUILD_B}:*"],
+        commands=["+@all"],
     )
     if [guild.id for guild in bot.client.guilds] != [GUILD_A, GUILD_B]:
         pytest.fail("setup: the task should reach guild A first")
@@ -362,7 +370,9 @@ def test_a_guild_whose_post_cannot_be_marked_is_skipped_and_logged(fake_redis, f
     # Without its marker the post could go out again: guild A gets none, and guild B gets its own.
     assert posts(gateway, unmarked) == []
     assert len(posts(gateway, marked)) == 1
-    assert [message for message in logged_errors(caplog) if str(GUILD_A) in message and "NoPermissionError" in message] != []
+    assert [
+        message for message in logged_errors(caplog) if str(GUILD_A) in message and "NoPermissionError" in message
+    ] != []
     printed = capsys.readouterr()
     assert [form for form in DATE_FORMS if form in caplog.text + printed.out + printed.err] == []
     # Nothing marks guild A as posted, so a restart that day posts there.
@@ -379,7 +389,9 @@ def test_a_post_that_fails_to_send_is_not_sent_again(fake_redis, freeze_today, g
     async def refuse_in_guild_a(channel_id, *, params):
         attempts.append(int(channel_id))
         if int(channel_id) == gateway.general(refused).id:
-            raise discord.Forbidden(types.SimpleNamespace(status=403, reason="Forbidden"), {"code": 50013, "message": "Missing Permissions"})
+            raise discord.Forbidden(
+                types.SimpleNamespace(status=403, reason="Forbidden"), {"code": 50013, "message": "Missing Permissions"}
+            )
         return await send_message(channel_id, params=params)
 
     monkeypatch.setattr(bot.client._connection.http, "send_message", refuse_in_guild_a)

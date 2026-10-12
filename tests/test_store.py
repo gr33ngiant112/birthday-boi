@@ -79,7 +79,9 @@ def test_monthly_task_skips_a_guild_with_no_stored_birthdays(fake_redis, freeze_
 
     asyncio.run(bot.check_upcoming_birthdays())
 
-    if f"<@{MEMBER[0]}>" not in "".join(payload.get("content") or "" for payload in gateway.sent_to(gateway.general(other))):
+    if f"<@{MEMBER[0]}>" not in "".join(
+        payload.get("content") or "" for payload in gateway.sent_to(gateway.general(other))
+    ):
         pytest.fail(f"setup: the other guild's post should list its member, got {gateway.sent!r}")
     assert gateway.sent_to(gateway.general(empty)) == []
 

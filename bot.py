@@ -25,6 +25,7 @@ DEV_GUILD_ID = None
 # Set by --sync: replace the bot's commands in every server with this build's at startup.
 SYNC_COMMANDS = False
 
+
 # Function to initialize Redis with timeouts. A rediss:// URL checks the server's
 # certificate and hostname; REDIS_TLS_INSECURE=1 turns both checks off, for servers
 # with self-signed certificates such as Heroku's:
@@ -39,8 +40,9 @@ def create_redis_client():
         socket_timeout=10,
         socket_connect_timeout=10,
         retry_on_timeout=True,
-        **tls_options
+        **tls_options,
     )
+
 
 # Created by main(); tests replace it with a fake.
 redis_client = None
@@ -67,12 +69,14 @@ log = logging.getLogger(__name__)
 SAVE_FAILED = "⚠️ Storage is unavailable, so your birthday was not saved. Please try again later."
 READ_FAILED = "⚠️ Storage is unavailable. Please try again later."
 
+
 # Raised by the storage helpers below when Redis fails, so that callers can tell an outage
 # from "nothing stored". The redis.RedisError is its __cause__. Its message is only the
 # error's type: callers log it, and the error of a failed transaction quotes its commands,
 # birth date included.
 class StoreUnavailable(Exception):
     pass
+
 
 # Store a birthday and share it with the guild where it was set. Raises StoreUnavailable.
 async def set_birthday_redis(guild_id, user_id, birthday):
@@ -87,6 +91,7 @@ async def set_birthday_redis(guild_id, user_id, birthday):
     except redis.RedisError as e:
         raise StoreUnavailable(type(e).__name__) from e
 
+
 # Get a member's birthday if they shared it with this guild. Raises StoreUnavailable.
 async def get_birthday_redis(guild_id, user_id):
     try:
@@ -97,6 +102,7 @@ async def get_birthday_redis(guild_id, user_id):
     except redis.RedisError as e:
         raise StoreUnavailable(type(e).__name__) from e
     return None
+
 
 # Get the (user_id, birthday) pairs shared with a guild. Raises StoreUnavailable.
 async def get_guild_birthdays_redis(guild_id):
@@ -109,6 +115,7 @@ async def get_guild_birthdays_redis(guild_id):
     except redis.RedisError as e:
         raise StoreUnavailable(type(e).__name__) from e
     return birthdays
+
 
 # Delete a member's birthday and remove them from every guild's set. Returns whether
 # anything was stored. Redis errors are raised, so a failed delete is never reported as done.
@@ -125,6 +132,7 @@ async def forget_birthday_redis(user_id):
     # transaction() WATCHes the member's list of guilds: if a /set_birthday adds a guild
     # after the read, the delete is not applied and runs again with the new list.
     return any(await redis_client.transaction(delete_all, guilds_key))
+
 
 # Stop sharing a member's birthday with one guild. When no other guild has it, no guild
 # can see the date, so it is deleted along with the member's list of guilds.
@@ -143,6 +151,7 @@ async def remove_birthday_from_guild_redis(guild_id, user_id):
     # WATCHed as in forget_birthday_redis, so a guild added meanwhile keeps the date.
     await redis_client.transaction(remove, guilds_key)
 
+
 # Mark a guild's post for a month ("YYYY-MM") as sent. Returns False if it was marked
 # already, by an earlier run or another bot process. Raises StoreUnavailable.
 async def mark_monthly_post_redis(guild_id, month):
@@ -150,6 +159,7 @@ async def mark_monthly_post_redis(guild_id, month):
         return bool(await redis_client.set(f"announce:{guild_id}:{month}", 1, nx=True, ex=MONTHLY_POST_MARKER_TTL))
     except redis.RedisError as e:
         raise StoreUnavailable(type(e).__name__) from e
+
 
 # Split a header and lines into messages of at most MESSAGE_LIMIT characters,
 # never splitting a line. Every line is a mention and a date, far below the limit.
@@ -162,6 +172,7 @@ def chunk_messages(header, lines):
             chunks[-1] += "\n" + line
     return chunks
 
+
 # The first date on or after today with this month and day. A Feb 29 birthday falls
 # on Feb 28 in years without Feb 29, so it still comes once a year.
 def next_occurrence(month, day, today):
@@ -171,6 +182,7 @@ def next_occurrence(month, day, today):
         day = 28
     return datetime.date(year, month, day)
 
+
 # Why a parsed date cannot be a birth date, or None if it can. A chat reply is public,
 # so the message never repeats the date.
 def birth_date_error(birthday_date, today):
@@ -179,6 +191,7 @@ def birth_date_error(birthday_date, today):
     if birthday_date.year < today.year - MAX_AGE_YEARS:
         return f"❌ That date is more than {MAX_AGE_YEARS} years ago. Please check the year and try again."
     return None
+
 
 # Background task: every day at MONTHLY_POST_TIME, and on the 1st it posts the upcoming birthdays
 @tasks.loop(time=MONTHLY_POST_TIME)
@@ -235,6 +248,7 @@ async def check_upcoming_birthdays():
         except Exception as e:
             print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
 
+
 # Before READY the bot has no guilds, so a run would post nowhere. A bot that becomes ready
 # after MONTHLY_POST_TIME has missed that day's run, so it runs once now: on the 1st that is
 # the month's post, and the guilds that already had it are marked and get no second one.
@@ -247,6 +261,7 @@ async def before_check_upcoming_birthdays():
         except Exception as e:
             # Raised here, the error would end the task before its first scheduled run.
             log.error("The monthly post at startup failed (%s)", type(e).__name__)
+
 
 # Subclassing Client to use app commands (slash commands)
 class MyClient(discord.Client):
@@ -269,13 +284,16 @@ class MyClient(discord.Client):
         # Start the upcoming birthdays task after commands are synced.
         check_upcoming_birthdays.start()
 
+
 # Instantiate the client
 client = MyClient()
+
 
 # Event listener for when the bot has connected
 @client.event
 async def on_ready():
-    print(f'✅ Logged in as {client.user}')
+    print(f"✅ Logged in as {client.user}")
+
 
 # Called when the bot is removed from a guild: kicked, banned or left, or the guild was
 # deleted. Nobody there can see the guild's birthdays any more.
@@ -284,6 +302,7 @@ async def on_guild_remove(guild):
     # Removing every member empties the guild's set, and Redis deletes an empty set.
     for user_id in await redis_client.smembers(f"guild:{guild.id}:birthdays"):
         await remove_birthday_from_guild_redis(guild.id, user_id)
+
 
 @client.event
 async def on_message(message):
@@ -308,28 +327,62 @@ async def on_message(message):
 
         # Infer intent using expanded keyword matching
         intent = None
-        if any(phrase in content for phrase in [
-            "my birthday is", "my bday is", "set my birthday", "set my birthday to", "update my birthday"
-        ]):
+        if any(
+            phrase in content
+            for phrase in [
+                "my birthday is",
+                "my bday is",
+                "set my birthday",
+                "set my birthday to",
+                "update my birthday",
+            ]
+        ):
             intent = "set"
-        elif any(phrase in content for phrase in [
-            "what is my", "when is my", "when my", "what my", "my birthday",
-            "when is my fucking birthday", "when do i get older", "next birthday"
-        ]):
+        elif any(
+            phrase in content
+            for phrase in [
+                "what is my",
+                "when is my",
+                "when my",
+                "what my",
+                "my birthday",
+                "when is my fucking birthday",
+                "when do i get older",
+                "next birthday",
+            ]
+        ):
             intent = "get"
-        elif any(phrase in content for phrase in [
-            "what is", "when is", "next birthday", "birthday", "bday",
-            "when is @everyone's birthday", "what birthdates are coming up", "what bdays are coming up"
-        ]):
+        elif any(
+            phrase in content
+            for phrase in [
+                "what is",
+                "when is",
+                "next birthday",
+                "birthday",
+                "bday",
+                "when is @everyone's birthday",
+                "what birthdates are coming up",
+                "what bdays are coming up",
+            ]
+        ):
             intent = "get_other"
 
         # Handle the inferred intent
         if intent == "set":
             # Use the extracted date if available
-            date_part = extracted_date if extracted_date else content.replace(f"@{client.user.name.lower()}", "").replace("my birthday is", "").replace("set my birthday to", "").strip()
+            date_part = (
+                extracted_date
+                if extracted_date
+                else content.replace(f"@{client.user.name.lower()}", "")
+                .replace("my birthday is", "")
+                .replace("set my birthday to", "")
+                .strip()
+            )
 
             # Ensure the extracted date part is clean
-            date_part = date_part.replace(",", "").replace("th", "").replace("st", "").replace("nd", "").replace("rd", "")
+            date_part = (
+                date_part.replace(",", "").replace("th", "").replace("st", "").replace("nd", "").replace("rd", "")
+            )
 
             birthday_date = None
 
@@ -355,13 +408,12 @@ async def on_message(message):
                     await message.reply(SAVE_FAILED, mention_author=False)
                     return
                 await message.reply(
-                    f"✅ Your birthday has been updated to {birthday_date.strftime('%m-%d-%Y')}.",
-                    mention_author=False
+                    f"✅ Your birthday has been updated to {birthday_date.strftime('%m-%d-%Y')}.", mention_author=False
                 )
             else:
                 await message.reply(
                     "❌ I couldn't understand the date format. Please try again with a valid date.",
-                    mention_author=False
+                    mention_author=False,
                 )
 
         # Lookups get one public reply with no date or name in it; /get_birthday
@@ -369,17 +421,21 @@ async def on_message(message):
         elif intent == "get":
             await message.reply(
                 "🔒 Use /get_birthday and pick yourself to see your birthday. Only you will see the answer.",
-                mention_author=False
+                mention_author=False,
             )
 
         elif intent == "get_other":
             await message.reply(
                 "🔒 Use /get_birthday and pick the member to see their birthday. Only you will see the answer.",
-                mention_author=False
+                mention_author=False,
             )
 
+
 # Slash command to set a birthday
-@client.tree.command(name="set_birthday", description="Set your birthday and share it with this server (format: MM-DD-YYYY or YYYY-MM-DD)")
+@client.tree.command(
+    name="set_birthday",
+    description="Set your birthday and share it with this server (format: MM-DD-YYYY or YYYY-MM-DD)",
+)
 @app_commands.describe(date="The date of your birthday (MM-DD-YYYY or YYYY-MM-DD)")
 @app_commands.guild_only()
 async def set_birthday(interaction: discord.Interaction, date: str):
@@ -403,12 +459,11 @@ async def set_birthday(interaction: discord.Interaction, date: str):
             f"✅ Your birthday has been set to {birthday_date.strftime('%m-%d-%Y')}.", ephemeral=True
         )
     except ValueError:
-        await interaction.followup.send(
-            "❌ Invalid date format! Use MM-DD-YYYY or YYYY-MM-DD.", ephemeral=True
-        )
+        await interaction.followup.send("❌ Invalid date format! Use MM-DD-YYYY or YYYY-MM-DD.", ephemeral=True)
     except StoreUnavailable as e:
         log.error("Storage unavailable in /set_birthday (%s)", e)
         await interaction.followup.send(SAVE_FAILED, ephemeral=True)
+
 
 # Command to query birthday
 @client.tree.command(name="get_birthday", description="Get a user's birthday")
@@ -434,13 +489,14 @@ async def get_birthday(interaction: discord.Interaction, user: discord.Member):
             await interaction.followup.send(
                 f"🎂 **{user.mention}'s Birthday:**\n"
                 f"{birthdate.strftime('%m-%d-%Y')} - next birthday {next_birthday.strftime('%A, %B %d %Y')}",
-                ephemeral=True
+                ephemeral=True,
             )
         except Exception as e:
             print(f"❌ Error processing birthday for user {user_id}: {e}")
             await interaction.followup.send("❌ An error occurred while retrieving the birthday.", ephemeral=True)
     else:
         await interaction.followup.send(f"❌ {user.mention} has not set their birthday yet.", ephemeral=True)
+
 
 # Command to list all birthdays
 @client.tree.command(name="list_birthdays", description="List all birthdays in the server")
@@ -464,7 +520,9 @@ async def list_birthdays(interaction: discord.Interaction):
             # Compute the next birthday, today or later
             next_birthday = next_occurrence(birthdate.month, birthdate.day, today)
 
-            lines.append(f"<@{user_id}> - {birthdate.strftime('%m-%d-%Y')} - next birthday {next_birthday.strftime('%A, %B %d %Y')}")
+            lines.append(
+                f"<@{user_id}> - {birthdate.strftime('%m-%d-%Y')} - next birthday {next_birthday.strftime('%A, %B %d %Y')}"
+            )
         except Exception as e:
             print(f"❌ Error processing birthday for user {user_id}: {e}")
 
@@ -473,6 +531,7 @@ async def list_birthdays(interaction: discord.Interaction):
             await interaction.followup.send(chunk, ephemeral=True)
     else:
         await interaction.followup.send("❌ No birthdays have been set yet.", ephemeral=True)
+
 
 # Command to forecast upcoming birthdays
 @client.tree.command(name="forecast_birthdays", description=f"Show birthdays in the next {FORECAST_DAYS} days")
@@ -511,6 +570,7 @@ async def forecast_birthdays(interaction: discord.Interaction):
     else:
         await interaction.followup.send(f"❌ No birthdays in the next {FORECAST_DAYS} days.", ephemeral=True)
 
+
 # Command to delete your birthday from every server
 @client.tree.command(name="forget_birthday", description="Delete your birthday from every server")
 @app_commands.guild_only()
@@ -520,12 +580,17 @@ async def forget_birthday(interaction: discord.Interaction):
         forgotten = await forget_birthday_redis(interaction.user.id)
     except redis.RedisError as e:
         print(f"❌ Error deleting a birthday: {e}")
-        await interaction.followup.send("❌ Your birthday could not be deleted. Please try again later.", ephemeral=True)
+        await interaction.followup.send(
+            "❌ Your birthday could not be deleted. Please try again later.", ephemeral=True
+        )
         return
     if forgotten:
         await interaction.followup.send("✅ Your birthday has been deleted from every server.", ephemeral=True)
     else:
-        await interaction.followup.send("✅ You had no birthday stored, so there was nothing to delete.", ephemeral=True)
+        await interaction.followup.send(
+            "✅ You had no birthday stored, so there was nothing to delete.", ephemeral=True
+        )
+
 
 # Send Redis a PING at startup. It goes through a client of its own, whose connections are
 # closed here, because redis.asyncio connections belong to the event loop that opened them,
@@ -537,6 +602,7 @@ async def ping_redis():
     finally:
         await startup_client.aclose(close_connection_pool=True)
 
+
 def main(argv=()):
     global TOKEN, REDIS_URL, DEV_GUILD_ID, SYNC_COMMANDS, redis_client
 
@@ -544,8 +610,7 @@ def main(argv=()):
     parser.add_argument(
         "--sync",
         action="store_true",
-        help="replace the slash commands in every server with this build's; "
-        "run once after a release that changes them",
+        help="replace the slash commands in every server with this build's; run once after a release that changes them",
     )
     SYNC_COMMANDS = parser.parse_args(argv).sync
 
@@ -572,7 +637,9 @@ def main(argv=()):
     try:
         asyncio.run(ping_redis())
     except redis.RedisError as e:
-        sys.exit(f"Cannot start: Redis did not answer a PING. Check REDIS_URL and that Redis is running. {type(e).__name__}: {e}")
+        sys.exit(
+            f"Cannot start: Redis did not answer a PING. Check REDIS_URL and that Redis is running. {type(e).__name__}: {e}"
+        )
 
     # Run the bot
     client.run(TOKEN)
