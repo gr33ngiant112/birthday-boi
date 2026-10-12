@@ -60,12 +60,13 @@ https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot%20applicati
 
 ### Running
 
-`python bot.py`, the Procfile's `worker` command, reads its settings from the environment; when `DYNO` is not set (a local run), it loads them from a `.env` file first. `cp .env.example .env` gives you one to fill in:
+`python bot.py` reads its settings from the environment, after adding those in a `.env` file if there is one; a variable already set in the environment wins over `.env`. `cp .env.example .env` gives you one to fill in:
 
 - `DISCORD_TOKEN`, required: the bot's token, from the application's Bot page.
 - `REDIS_URL`, required: where Redis listens. `redis://127.0.0.1:6379/0` is the local Redis from `compose.dev.yaml`.
 - `DEV_GUILD_ID`, optional: a test server's ID (see "Running against a test server").
 - `REDIS_TLS_INSECURE`, optional, for `rediss://` URLs only: the bot checks the server's certificate unless this is `1`. A server with a self-signed certificate, such as Heroku's, needs `REDIS_TLS_INSECURE=1`, or the certificate check fails and the bot does not start.
+- `HEARTBEAT_FILE`, optional: the file the bot touches every minute while it is connected to Discord, which `python bot.py --healthcheck` checks (see "Deploying"). `/tmp/birthday-boi.heartbeat` when unset.
 
 If `DISCORD_TOKEN` or `REDIS_URL` is missing or empty, the bot exits with status 1 and a line that names it, before it contacts Redis or Discord. Before it logs in to Discord, the bot sends Redis a PING. If Redis does not answer, the bot exits with status 1 and prints the reason, so start Redis first and check `REDIS_URL`.
 
@@ -78,6 +79,17 @@ Use a separate Discord application for development, and keep its token as the on
 3. Run `python bot.py` with the venv active. The bot copies its slash commands to the `DEV_GUILD_ID` server and syncs them there, where they show up at once.
 
 `docker compose -f compose.dev.yaml down` stops Redis; add `-v` to delete its data.
+
+### Deploying
+
+`compose.yaml` runs the bot and its own Redis on one host, as the Compose project `birthday-boi-prod`, apart from `compose.dev.yaml`'s development Redis. On the host, in a clone of this repository used only for deploying (a development clone's `.env` holds the development token):
+
+1. Run `cp .env.example .env` and set `DISCORD_TOKEN` to the production application's token. Compose sets `REDIS_URL` to the stack's Redis, which wins over the one in `.env`. `.env` stays on the host: `.dockerignore` keeps it out of the image.
+2. Run `docker compose up -d --build`. The bot starts once Redis answers its healthcheck, and both restart unless you stop them. Redis keeps its data in the `birthday-boi-prod_redis-data` volume and publishes no port on the host.
+3. `docker compose ps` shows the bot's health in its status: `health: starting` until its first heartbeat, then `healthy`. The bot touches a heartbeat file every minute while it is connected to Discord. The image's HEALTHCHECK, `python bot.py --healthcheck`, fails when that file is missing or 3 minutes old, and after 3 failed checks in a row the status is `unhealthy`. `docker inspect --format '{{json .State.Health}}' birthday-boi-prod-bot-1` shows the latest checks' output, and `docker compose logs bot` the bot's log.
+4. After a release that changes the slash commands, sync them once (see "Updating the slash commands"): run `docker compose stop bot`, then `docker compose run --rm bot python bot.py --sync`. When it prints `✅ Slash commands synced globally.`, stop it with Ctrl+C and run `docker compose start bot`.
+
+To update the bot, pull the new version and run `docker compose up -d --build` again. `docker compose down` stops the stack and keeps the data; `docker compose down -v` deletes it.
 
 ### Updating the slash commands
 

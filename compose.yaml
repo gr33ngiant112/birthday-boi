@@ -1,0 +1,39 @@
+# The bot and its own Redis on one host (#35): `docker compose up -d --build`. The README's
+# "Deploying" has the steps. compose.dev.yaml is separate, a Redis for local development; its
+# project is named after the clone's directory ("birthday-boi"), so this stack's name keeps the
+# two projects' containers and volumes apart.
+name: birthday-boi-prod
+
+services:
+  bot:
+    build: .
+    # The bot's settings (.env.example lists them) come from .env on this host. It never enters
+    # the image: .dockerignore keeps it out of the build.
+    env_file: .env
+    environment:
+      # The Redis below, over this project's network. It wins over a REDIS_URL in .env.
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # One bot per token: a second one would receive every event and command too.
+    deploy:
+      replicas: 1
+    # The image's HEALTHCHECK runs `python bot.py --healthcheck`; `docker compose ps` shows it.
+
+  redis:
+    # The official Redis image, pinned to its digest, as in compose.dev.yaml.
+    image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
+    # No published port: only the bot reaches Redis, over this project's network.
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis-data:

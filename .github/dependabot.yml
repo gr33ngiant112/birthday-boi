@@ -51,7 +51,7 @@ updates:
       prefix: chore
       include: scope
 
-  # compose.dev.yaml's Redis image, pinned to its digest.
+  # The Redis image of compose.yaml and compose.dev.yaml, pinned to its digest.
   - package-ecosystem: docker-compose
     directory: /
     schedule:

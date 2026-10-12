@@ -44,6 +44,11 @@ ENV PATH=/app/.venv/bin:$PATH
 COPY bot.py core.py ./
 USER 10001
 CMD ["python", "bot.py"]
+# The bot touches its heartbeat file every minute while it is connected to Discord (#35).
+# `python bot.py --healthcheck` fails when the file is missing or 3 minutes old, and after 3
+# failed checks in a row Docker marks the container unhealthy. The start period leaves time to
+# log in and write the first heartbeat.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=2m --retries=3 CMD ["python", "bot.py", "--healthcheck"]
 
 # The tests run against the runtime stage's bot.py, core.py and packages. .github/scripts/ is
 # here so the lint covers every Python file CI linted on the host.

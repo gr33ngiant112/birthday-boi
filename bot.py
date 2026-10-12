@@ -10,7 +10,9 @@ import datetime
 import calendar
 import asyncio
 import logging
+import pathlib
 import sys
+import time
 from urllib.parse import urlparse
 
 import core
@@ -22,6 +24,9 @@ REDIS_URL = None
 DEV_GUILD_ID = None
 # Set by --sync: replace the bot's commands in every server with this build's at startup.
 SYNC_COMMANDS = False
+# The file the heartbeat task touches, and `--healthcheck` reads: HEARTBEAT_FILE, or
+# DEFAULT_HEARTBEAT_FILE when that is unset or empty.
+HEARTBEAT_FILE = None
 
 
 # Function to initialize Redis with timeouts. A rediss:// URL checks the server's
@@ -269,6 +274,7 @@ class MyClient(discord.Client):
             print("✅ Slash commands synced globally.")
         # Start the upcoming birthdays task after commands are synced.
         check_upcoming_birthdays.start()
+        heartbeat.start()
 
 
 # Instantiate the client
@@ -494,6 +500,31 @@ async def birthday_forget(interaction: discord.Interaction):
 client.tree.add_command(birthday_group)
 
 
+# The heartbeat, for the Docker HEALTHCHECK (#35): a gateway bot has no port to probe, so the
+# heartbeat task touches HEARTBEAT_FILE every HEARTBEAT_INTERVAL while the bot is connected to
+# Discord, and `python bot.py --healthcheck` fails once the file is HEARTBEAT_MAX_AGE old.
+HEARTBEAT_INTERVAL = datetime.timedelta(seconds=60)
+HEARTBEAT_MAX_AGE = 3 * HEARTBEAT_INTERVAL
+# Under /tmp, which the image's unprivileged user can write.
+DEFAULT_HEARTBEAT_FILE = "/tmp/birthday-boi.heartbeat"
+
+
+@tasks.loop(seconds=HEARTBEAT_INTERVAL.total_seconds())
+async def heartbeat():
+    # Only while ready and connected: discord.py keeps is_ready() through a reconnect, so the
+    # gateway's websocket must be open too. A bot that is not connected leaves the file to age.
+    if client.is_ready() and client.ws is not None and client.ws.open:
+        await asyncio.to_thread(pathlib.Path(HEARTBEAT_FILE).touch)
+
+
+# How many seconds ago the heartbeat file was touched, or None if it cannot be read.
+def heartbeat_age(path):
+    try:
+        return time.time() - pathlib.Path(path).stat().st_mtime
+    except OSError:
+        return None
+
+
 # Send Redis a PING at startup. It goes through a client of its own, whose connections are
 # closed here, because redis.asyncio connections belong to the event loop that opened them,
 # and client.run() then starts a new loop for the bot.
@@ -506,7 +537,7 @@ async def ping_redis():
 
 
 def main(argv=()):
-    global TOKEN, REDIS_URL, DEV_GUILD_ID, SYNC_COMMANDS, redis_client
+    global TOKEN, REDIS_URL, DEV_GUILD_ID, SYNC_COMMANDS, HEARTBEAT_FILE, redis_client
 
     parser = argparse.ArgumentParser(description="Run the birthday-boi Discord bot.")
     parser.add_argument(
@@ -514,16 +545,30 @@ def main(argv=()):
         action="store_true",
         help="replace the slash commands in every server with this build's; run once after a release that changes them",
     )
-    SYNC_COMMANDS = parser.parse_args(argv).sync
+    parser.add_argument(
+        "--healthcheck",
+        action="store_true",
+        help="exit 0 if the heartbeat file is fresh, or 1 if it is missing or stale; the image's HEALTHCHECK",
+    )
+    args = parser.parse_args(argv)
+    SYNC_COMMANDS = args.sync
 
-    # If running on Heroku, DYNO will be set; otherwise load .env for local testing.
-    if os.getenv("DYNO"):
-        TOKEN = os.getenv("DISCORD_TOKEN")
-        REDIS_URL = os.getenv("REDIS_URL")
-    else:
-        load_dotenv()
-        TOKEN = os.getenv("DISCORD_TOKEN")
-        REDIS_URL = os.getenv("REDIS_URL")
+    # The settings come from the environment, after load_dotenv() adds those in a .env file if
+    # there is one. It never overrides a variable that is already set, so in a container the
+    # env_file's values win; the image has no .env (.dockerignore).
+    load_dotenv()
+    HEARTBEAT_FILE = os.getenv("HEARTBEAT_FILE") or DEFAULT_HEARTBEAT_FILE
+    if args.healthcheck:
+        age = heartbeat_age(HEARTBEAT_FILE)
+        if age is None or age >= HEARTBEAT_MAX_AGE.total_seconds():
+            limit = HEARTBEAT_MAX_AGE.total_seconds()
+            state = "is missing or unreadable" if age is None else f"is {age:.0f} s old, over the {limit:.0f} s limit"
+            print(f"Unhealthy: the heartbeat file {HEARTBEAT_FILE} {state}.", file=sys.stderr)
+            sys.exit(1)
+        print(f"Healthy: the heartbeat file {HEARTBEAT_FILE} is {age:.0f} s old.")
+        sys.exit(0)
+    TOKEN = os.getenv("DISCORD_TOKEN")
+    REDIS_URL = os.getenv("REDIS_URL")
 
     # Stop before anything is contacted. An empty value counts as missing: a .env copied from
     # .env.example has DISCORD_TOKEN= until the token is filled in.

@@ -9,6 +9,7 @@ nothing here needs a network, a Redis server or a real Discord token.
 """
 
 import asyncio
+import functools
 import importlib
 import os
 import pathlib
@@ -19,6 +20,7 @@ from unittest import mock
 
 import discord
 import dotenv
+import dotenv.main
 import fakeredis
 import pytest
 import redis
@@ -60,10 +62,15 @@ def stub_redis_ping():
     return mock.patch.object(redis.asyncio.Redis, "ping", new=mock.AsyncMock(return_value=True))
 
 
+def no_dotenv(bot):
+    """A patch that makes bot's load_dotenv() a no-op. main() always calls it, and from bot.py
+    python-dotenv looks for a .env in the repository and in every directory above it."""
+    return mock.patch.object(bot, "load_dotenv")
+
+
 def test_import_does_not_start_the_bot(monkeypatch):
-    # Config is present and DYNO is unset (a local run). Before main() existed,
-    # importing bot here loaded .env, built the Redis client and called client.run.
-    monkeypatch.delenv("DYNO", raising=False)
+    # Config is present. Before main() existed, importing bot here loaded .env, built the
+    # Redis client and called client.run.
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
 
@@ -83,8 +90,7 @@ def test_import_does_not_start_the_bot(monkeypatch):
 
 
 def test_main_runs_client_with_token_from_env(monkeypatch):
-    # With DYNO set (Heroku), main() reads its config from the environment only.
-    monkeypatch.setenv("DYNO", "pytest")
+    # main() reads its config from the environment; load_dotenv() is a no-op here.
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     # redis.asyncio.from_url() only builds the client; nothing connects.
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
@@ -98,14 +104,13 @@ def test_main_runs_client_with_token_from_env(monkeypatch):
         bot.main()
 
     run.assert_called_once_with(bot.client, FAKE_TOKEN)
-    load_dotenv.assert_not_called()
+    load_dotenv.assert_called_once_with()
     assert isinstance(bot.redis_client, redis.asyncio.Redis)
     assert bot.redis_client.connection_pool.connection_kwargs["host"] == "localhost"
 
 
 def test_main_loads_dotenv_before_reading_config(monkeypatch):
-    # Without DYNO, main() loads .env first and then reads the values it set.
-    monkeypatch.delenv("DYNO", raising=False)
+    # main() loads .env first and then reads the values it set.
     monkeypatch.delenv("DISCORD_TOKEN", raising=False)
     monkeypatch.delenv("REDIS_URL", raising=False)
     bot, _ = import_fresh_bot(monkeypatch)
@@ -126,23 +131,72 @@ def test_main_loads_dotenv_before_reading_config(monkeypatch):
     run.assert_called_once_with(bot.client, FAKE_TOKEN)
 
 
+def test_main_loads_dotenv_even_where_dyno_is_set(monkeypatch):
+    # #35: main() skipped load_dotenv() when Heroku's DYNO was set. Without Heroku it always
+    # calls it; python-dotenv never overrides a variable that is already set.
+    monkeypatch.setenv("DYNO", "worker.1")
+    monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
+    monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
+    bot, _ = import_fresh_bot(monkeypatch)
+
+    with (
+        mock.patch.object(discord.Client, "run", autospec=True) as run,
+        no_dotenv(bot) as load_dotenv,
+        stub_redis_ping(),
+    ):
+        bot.main()
+
+    load_dotenv.assert_called_once_with()
+    run.assert_called_once_with(bot.client, FAKE_TOKEN)
+
+
+def test_main_keeps_the_environment_over_a_dotenv_file(monkeypatch, tmp_path):
+    # #35: compose.yaml sets the container's environment (env_file, and REDIS_URL for its own
+    # Redis). A variable already set there wins over the same one in a .env file, and one only
+    # the file sets still comes from it. The real load_dotenv() reads tmp_path's .env here.
+    dotenv_file = tmp_path / ".env"
+    dotenv_file.write_text(
+        "DISCORD_TOKEN=token-from-the-file\nREDIS_URL=redis://from-the-file:6379/0\nDEV_GUILD_ID=300000000000019000\n"
+    )
+    monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
+    monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
+    # Unset, so the file sets it; monkeypatch removes it again afterwards.
+    monkeypatch.setenv("DEV_GUILD_ID", "")
+    monkeypatch.delenv("DEV_GUILD_ID")
+    bot, _ = import_fresh_bot(monkeypatch)
+    load_this_file = functools.partial(dotenv.main.load_dotenv, dotenv_path=dotenv_file)
+
+    with (
+        mock.patch.object(discord.Client, "run", autospec=True) as run,
+        mock.patch.object(bot, "load_dotenv", side_effect=load_this_file) as load_dotenv,
+        stub_redis_ping(),
+    ):
+        bot.main()
+
+    if load_dotenv.call_count != 1 or os.environ.get("DEV_GUILD_ID") != "300000000000019000":
+        pytest.fail(f"setup: main() should load the file once, got {load_dotenv.call_args_list!r}")
+    run.assert_called_once_with(bot.client, FAKE_TOKEN)
+    assert bot.redis_client.connection_pool.connection_kwargs["host"] == "localhost"
+    assert bot.DEV_GUILD_ID == 300000000000019000
+
+
 def run_bot_py(monkeypatch, *flags):
     """Run bot.py as `python bot.py FLAGS...` does, with the startup PING stubbed.
 
-    The caller patches Client.run. Returns the script's globals.
+    The caller patches Client.run. Returns the script's globals. The script binds dotenv's
+    load_dotenv when it runs, so the patch is on the dotenv module.
     """
-    monkeypatch.setenv("DYNO", "pytest")
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
     monkeypatch.delenv("DEV_GUILD_ID", raising=False)
     monkeypatch.setattr(sys, "argv", [str(REPO_ROOT / "bot.py"), *flags])
 
-    with stub_redis_ping():
+    with stub_redis_ping(), mock.patch.object(dotenv, "load_dotenv"):
         return runpy.run_path(str(REPO_ROOT / "bot.py"), run_name="__main__")
 
 
 def test_running_bot_py_as_a_script_calls_main(monkeypatch):
-    # The Procfile starts the bot with `python bot.py`, which syncs no commands (#28).
+    # The image starts the bot with `python bot.py`, which syncs no commands (#28).
     with mock.patch.object(discord.Client, "run", autospec=True) as run:
         namespace = run_bot_py(monkeypatch)
 
@@ -169,7 +223,6 @@ def test_an_unknown_flag_stops_bot_py_before_it_logs_in(monkeypatch, capsys):
 
 @pytest.mark.parametrize(("value", "expected"), [(None, None), ("", None), ("300000000000019000", 300000000000019000)])
 def test_main_reads_the_development_server_from_dev_guild_id(monkeypatch, value, expected):
-    monkeypatch.setenv("DYNO", "pytest")
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
     if value is None:
@@ -178,7 +231,7 @@ def test_main_reads_the_development_server_from_dev_guild_id(monkeypatch, value,
         monkeypatch.setenv("DEV_GUILD_ID", value)
     bot, _ = import_fresh_bot(monkeypatch)
 
-    with mock.patch.object(discord.Client, "run", autospec=True) as run, stub_redis_ping():
+    with mock.patch.object(discord.Client, "run", autospec=True) as run, stub_redis_ping(), no_dotenv(bot):
         bot.main()
 
     run.assert_called_once_with(bot.client, FAKE_TOKEN)
@@ -186,13 +239,16 @@ def test_main_reads_the_development_server_from_dev_guild_id(monkeypatch, value,
 
 
 def test_main_exits_with_a_clear_message_when_dev_guild_id_is_not_a_number(monkeypatch):
-    monkeypatch.setenv("DYNO", "pytest")
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
     monkeypatch.setenv("DEV_GUILD_ID", "my-test-server")
     bot, _ = import_fresh_bot(monkeypatch)
 
-    with mock.patch.object(discord.Client, "run", autospec=True) as run, pytest.raises(SystemExit) as exited:
+    with (
+        mock.patch.object(discord.Client, "run", autospec=True) as run,
+        no_dotenv(bot),
+        pytest.raises(SystemExit) as exited,
+    ):
         bot.main()
 
     run.assert_not_called()
@@ -216,9 +272,8 @@ def exit_line_for_missing(names):
 )
 def test_main_names_each_missing_variable_and_stops_before_redis_and_discord(monkeypatch, env, named):
     # #18: a missing REDIS_URL used to crash inside redis-py with a traceback, and an empty
-    # DISCORD_TOKEN reached Redis and then client.run(). With DYNO set, main() reads the
-    # environment only and never loads .env.
-    monkeypatch.setenv("DYNO", "pytest")
+    # DISCORD_TOKEN reached Redis and then client.run(). load_dotenv() is a no-op here, so
+    # main() reads the environment only.
     for name in ("DISCORD_TOKEN", "REDIS_URL", "DEV_GUILD_ID"):
         monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
@@ -228,6 +283,7 @@ def test_main_names_each_missing_variable_and_stops_before_redis_and_discord(mon
     with (
         mock.patch.object(discord.Client, "run", autospec=True) as run,
         mock.patch.object(redis.asyncio, "from_url") as from_url,
+        no_dotenv(bot),
         pytest.raises(SystemExit) as exited,
     ):
         bot.main()
@@ -240,9 +296,8 @@ def test_main_names_each_missing_variable_and_stops_before_redis_and_discord(mon
 
 
 def test_a_env_copied_from_the_example_stops_at_the_empty_token(monkeypatch):
-    # Without DYNO, main() loads .env first. `cp .env.example .env` gives DISCORD_TOKEN= until
-    # the token is filled in, and an empty value counts as missing.
-    monkeypatch.delenv("DYNO", raising=False)
+    # main() loads .env first. `cp .env.example .env` gives DISCORD_TOKEN= until the token is
+    # filled in, and an empty value counts as missing.
     for name in ("DISCORD_TOKEN", "REDIS_URL", "DEV_GUILD_ID"):
         monkeypatch.delenv(name, raising=False)
     bot, _ = import_fresh_bot(monkeypatch)
@@ -271,7 +326,6 @@ def test_a_env_copied_from_the_example_stops_at_the_empty_token(monkeypatch):
 def test_main_exits_with_a_clear_message_when_redis_does_not_answer(monkeypatch):
     # #15: the bot used to start anyway, and then every save failed and every read said
     # that nothing was stored.
-    monkeypatch.setenv("DYNO", "pytest")
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
     bot, _ = import_fresh_bot(monkeypatch)
@@ -279,7 +333,11 @@ def test_main_exits_with_a_clear_message_when_redis_does_not_answer(monkeypatch)
     server.connected = False  # every command raises redis.ConnectionError
     monkeypatch.setattr(bot, "create_redis_client", lambda: fakeredis.FakeAsyncRedis(server=server))
 
-    with mock.patch.object(discord.Client, "run", autospec=True) as run, pytest.raises(SystemExit) as exited:
+    with (
+        mock.patch.object(discord.Client, "run", autospec=True) as run,
+        no_dotenv(bot),
+        pytest.raises(SystemExit) as exited,
+    ):
         bot.main()
 
     run.assert_not_called()
@@ -297,7 +355,6 @@ def test_main_pings_redis_with_a_client_of_its_own(monkeypatch):
     # loop would raise "RuntimeError: Event loop is closed". fakeredis connections work in
     # any loop, so this checks the cause: when client.run() is called, the PING has been
     # sent, not through the bot's client, and its connection is closed.
-    monkeypatch.setenv("DYNO", "pytest")
     monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
     monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
     bot, _ = import_fresh_bot(monkeypatch)
@@ -322,7 +379,7 @@ def test_main_pings_redis_with_a_client_of_its_own(monkeypatch):
         # The bot's first Redis command, in a new event loop as client.run() would start.
         at_run["ping from the bot's loop"] = asyncio.run(bot.redis_client.ping())
 
-    with mock.patch.object(discord.Client, "run", autospec=True, side_effect=run) as client_run:
+    with mock.patch.object(discord.Client, "run", autospec=True, side_effect=run) as client_run, no_dotenv(bot):
         bot.main()
 
     client_run.assert_called_once_with(bot.client, FAKE_TOKEN)
@@ -334,9 +391,8 @@ def test_main_pings_redis_with_a_client_of_its_own(monkeypatch):
 
 def test_import_without_config_from_an_empty_directory(tmp_path):
     # #24: `import bot` with no DISCORD_TOKEN or REDIS_URL, from a directory with no
-    # .env, raised AttributeError while building the Redis client. DYNO is removed
-    # too, so this is the local-run path that used to call load_dotenv().
-    env = {k: v for k, v in os.environ.items() if k not in ("DISCORD_TOKEN", "REDIS_URL", "DYNO")}
+    # .env, raised AttributeError while building the Redis client.
+    env = {k: v for k, v in os.environ.items() if k not in ("DISCORD_TOKEN", "REDIS_URL")}
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH")]))
 
     result = subprocess.run(
@@ -357,7 +413,7 @@ def test_import_loads_no_spacy(tmp_path):
     # parser used; #30 measured 0.87 s more startup and peak memory up from 46 MB to 160 MB. Members
     # now type dates as slash command options. A fresh interpreter, so no earlier import here counts.
     script = IMPORT_BOT + "print(sorted(m for m in sys.modules if m.split('.')[0] in ('spacy', 'en_core_web_sm')))\n"
-    env = {k: v for k, v in os.environ.items() if k not in ("DISCORD_TOKEN", "REDIS_URL", "DYNO")}
+    env = {k: v for k, v in os.environ.items() if k not in ("DISCORD_TOKEN", "REDIS_URL")}
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH")]))
 
     result = subprocess.run(

@@ -158,14 +158,14 @@ def refuse_keys_and_scan(monkeypatch):
 
 
 def test_the_startup_ping_does_not_use_keys_or_scan(fake_redis, monkeypatch):
-    # main() sends Redis a PING through a client of its own before it logs in (#15). With DYNO
-    # set, main() reads its config from the environment and never loads .env.
-    monkeypatch.setenv("DYNO", "pytest")
+    # main() sends Redis a PING through a client of its own before it logs in (#15). Its
+    # load_dotenv() is a no-op here, so it reads its config from the environment only.
+    monkeypatch.setattr(bot, "load_dotenv", mock.Mock())
     monkeypatch.setenv("DISCORD_TOKEN", "not-a-real-token")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.delenv("DEV_GUILD_ID", raising=False)
     # main() sets these module globals; monkeypatch puts them back afterwards.
-    for name in ("TOKEN", "REDIS_URL", "DEV_GUILD_ID", "SYNC_COMMANDS", "redis_client"):
+    for name in ("TOKEN", "REDIS_URL", "DEV_GUILD_ID", "SYNC_COMMANDS", "HEARTBEAT_FILE", "redis_client"):
         monkeypatch.setattr(bot, name, getattr(bot, name))
     server = fake_redis.connection_pool.connection_kwargs["server"]
     monkeypatch.setattr(
