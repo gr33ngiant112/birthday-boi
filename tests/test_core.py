@@ -139,6 +139,54 @@ def test_every_chunk_fits_discords_limit_and_keeps_every_line_in_order(header, l
     assert "\n".join(chunks) == "\n".join([header, *lines])
 
 
+# #37: Discord's limits on embeds (Embed Limits, https://docs.discord.com/developers/resources/message),
+# written out here rather than read from core.py.
+EMBED_TITLE_LIMIT = 256
+EMBED_DESCRIPTION_LIMIT = 4096
+# All the embeds of a message together, titles and descriptions included.
+EMBEDS_TOTAL_LIMIT = 6000
+# The titles of the two lists bot.py sends as embeds.
+EMBED_TITLES = ["🎉 Upcoming Birthdays", "🎉 Server Birthdays"]
+# Lines up to the description's limit: a name, or a name repeated until the line is up to 4096 characters.
+description_lines = st.one_of(
+    names,
+    st.builds(
+        lambda name, length: (name * length)[:length], names.filter(bool), st.integers(1, EMBED_DESCRIPTION_LIMIT)
+    ),
+)
+
+
+@settings(max_examples=150, deadline=None)
+@given(title=st.sampled_from(EMBED_TITLES), lines=st.lists(description_lines))
+# No lines; two lines that fill one description exactly (2047 + the newline + 2048 = 4096); two that
+# are a character too long for one; and two full descriptions, 8192 characters, which no message holds.
+@example(title=EMBED_TITLES[0], lines=[])
+@example(title=EMBED_TITLES[0], lines=["x" * 2047, "y" * 2048])
+@example(title=EMBED_TITLES[1], lines=["x" * 2048, "y" * 2048])
+@example(title=EMBED_TITLES[1], lines=["x" * EMBED_DESCRIPTION_LIMIT, "y" * EMBED_DESCRIPTION_LIMIT])
+def test_every_embed_fits_discords_limits_and_keeps_every_line_in_order(title, lines):
+    embeds = core.chunk_embeds(title, lines)
+
+    titles = [embed_title or "" for embed_title, _ in embeds]
+    descriptions = [description for _, description in embeds]
+    # One embed per message, so a message's embeds hold one title, or none, and one description.
+    assert [len(text) for text in descriptions if len(text) > EMBED_DESCRIPTION_LIMIT] == []
+    assert [len(text) for text in titles if len(text) > EMBED_TITLE_LIMIT] == []
+    assert [
+        len(t) + len(d) for t, d in zip(titles, descriptions, strict=True) if len(t) + len(d) > EMBEDS_TOTAL_LIMIT
+    ] == []
+    # The title on the first embed only (no lines, no embeds), and every line once, in order.
+    assert titles == ([title] + [""] * (len(embeds) - 1) if lines else [])
+    assert "\n".join(descriptions) == "\n".join(lines)
+
+
+def test_an_embed_holds_lines_up_to_4096_characters_and_never_splits_one():
+    # 2047 + the newline + 2048 is 4096 characters: one embed. A character more takes a second.
+    assert core.chunk_embeds("T", ["x" * 2047, "y" * 2048]) == [("T", "x" * 2047 + "\n" + "y" * 2048)]
+    assert core.chunk_embeds("T", ["x" * 2048, "y" * 2048]) == [("T", "x" * 2048), (None, "y" * 2048)]
+    assert core.chunk_embeds("T", []) == []
+
+
 @settings(max_examples=300, deadline=None)
 @given(month=st.integers(1, 12), day=st.integers(1, 31), year=st.none() | st.integers(1900, 2100))
 @example(month=2, day=29, year=None)
