@@ -1,11 +1,17 @@
-# Three stages:
-#   runtime  the bot's image: its dependencies and bot.py, run as an unprivileged user.
+# Stages:
+#   uv       uv's own image. Its /uv binary is mounted only while packages install, so uv is not in
+#            the bot's image.
+#   runtime  the bot's image: the packages uv.lock pins and bot.py, run as an unprivileged user.
 #   test     runtime plus the dev tools and the tests; `docker run` lints and runs the tests.
 #   (last)   runtime again, so a plain `docker build .` builds the bot's image, not the test image.
 # The README's "Building and testing the Docker image" has the commands.
 
+# uv 0.12.23 from Astral's official image, pinned to its digest. uv comes from a FROM line of its
+# own because Dependabot's docker updates read only FROM lines, so they bump this one too.
+FROM ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 AS uv
+
 # python:3.11-slim (Python 3.11.17 on Debian 13 when pinned), pinned to its digest. spaCy 3.5.0,
-# which requirements.txt pins, has wheels for CPython 3.11 at the newest, built for glibc.
+# which pyproject.toml pins, has wheels for CPython 3.11 at the newest, built for glibc.
 FROM python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce AS runtime
 
 # print() output reaches `docker logs` at once instead of waiting in a buffer.
@@ -17,11 +23,21 @@ WORKDIR /app
 # the bot cannot change its own code.
 RUN useradd --uid 10001 --no-log-init bot
 
-# --only-binary :all: as in CI: no source distributions from PyPI. pip still builds spaCy's
-# English model from the release URL in requirements.txt. The dependencies come before bot.py,
-# so a code change reuses this layer.
-COPY requirements.txt ./
-RUN python -m pip install --no-cache-dir --only-binary :all: -r requirements.txt
+# uv installs the packages into /app/.venv with this image's Python and never downloads one. It
+# compiles them to bytecode, because the bot cannot write .pyc files under /app.
+ENV UV_PYTHON=/usr/local/bin/python3 \
+    UV_PYTHON_DOWNLOADS=never \
+    UV_COMPILE_BYTECODE=1 \
+    UV_NO_CACHE=1
+
+# --locked fails the build when uv.lock does not match pyproject.toml. --no-build fails it when a
+# package has no wheel, so nothing is built from source. The dependencies come before bot.py, so
+# a code change reuses this layer.
+COPY pyproject.toml uv.lock ./
+RUN --mount=from=uv,source=/uv,target=/bin/uv \
+    uv sync --locked --no-build --no-dev
+# `python` is the virtualenv's Python, which has the packages.
+ENV PATH=/app/.venv/bin:$PATH
 
 COPY bot.py ./
 USER 10001
@@ -31,8 +47,9 @@ CMD ["python", "bot.py"]
 # lint covers every Python file CI linted on the host.
 FROM runtime AS test
 USER 0
-COPY requirements-dev.txt ./
-RUN python -m pip install --no-cache-dir --only-binary :all: -r requirements-dev.txt
+# Adds pyproject.toml's dev group (ruff, pytest, fakeredis, pre-commit) to the same virtualenv.
+RUN --mount=from=uv,source=/uv,target=/bin/uv \
+    uv sync --locked --no-build --group dev
 COPY pytest.ini ./
 COPY tests/ tests/
 COPY .github/scripts/ .github/scripts/
