@@ -1,7 +1,8 @@
 # Stages:
 #   uv       uv's own image. Its /uv binary is mounted only while packages install, so uv is not in
 #            the bot's image.
-#   runtime  the bot's image: the packages uv.lock pins and bot.py, run as an unprivileged user.
+#   runtime  the bot's image: the packages uv.lock pins, bot.py and core.py, run as an unprivileged
+#            user.
 #   test     runtime plus the dev tools and the tests; `docker run` lints, checks the format and
 #            runs the tests.
 #   (last)   runtime again, so a plain `docker build .` builds the bot's image, not the test image.
@@ -40,12 +41,12 @@ RUN --mount=from=uv,source=/uv,target=/bin/uv \
 # `python` is the virtualenv's Python, which has the packages.
 ENV PATH=/app/.venv/bin:$PATH
 
-COPY bot.py ./
+COPY bot.py core.py ./
 USER 10001
 CMD ["python", "bot.py"]
 
-# The tests run against the runtime stage's bot.py and packages. .github/scripts/ is here so the
-# lint covers every Python file CI linted on the host.
+# The tests run against the runtime stage's bot.py, core.py and packages. .github/scripts/ is
+# here so the lint covers every Python file CI linted on the host.
 FROM runtime AS test
 USER 0
 # Adds pyproject.toml's dev group (ruff, pytest, fakeredis, pre-commit) to the same virtualenv.
