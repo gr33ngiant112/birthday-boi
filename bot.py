@@ -262,8 +262,8 @@ async def check_upcoming_birthdays():
                 if upcoming_bd is not None:
                     upcoming.append((upcoming_bd, user_id))
             except ValueError as e:  # a stored date that cannot be read; it must not stop the post
-                log.warning(
-                    "Skipped user %s in the monthly post of guild %s: unreadable stored birthday (%s)",
+                log.error(
+                    "Skipped user %s in the monthly post of guild %s: unreadable birthday (%s)",
                     user_id,
                     guild.id,
                     type(e).__name__,
@@ -287,8 +287,9 @@ async def check_upcoming_birthdays():
             for chunk in core.chunk_messages("🎉 **Upcoming Birthdays:**", lines):
                 await channel.send(chunk)
         # Discord refused the post (HTTPException, such as Forbidden without permission to write in
-        # #general), or the connection failed (aiohttp's errors and OSError, which discord.py raises
-        # once its retries run out). The other guilds still get their posts.
+        # #general), or the connection failed (an aiohttp error or an OSError, which discord.py's HTTP
+        # client raises as they come, after a few retries for a reset connection). The other guilds
+        # still get their posts.
         except (discord.HTTPException, aiohttp.ClientError, OSError) as e:
             log.error("The monthly post failed to send in guild %s (%s)", guild.id, type(e).__name__)
 
@@ -524,7 +525,7 @@ async def birthday_show(interaction: discord.Interaction, member: discord.Member
             )
         except ValueError as e:  # a stored date that cannot be read; the member gets an error reply, not silence
             log.error(
-                "Unreadable stored birthday of user %s in /birthday show in guild %s (%s)",
+                "Unreadable birthday of user %s in /birthday show in guild %s (%s)",
                 user_id,
                 interaction.guild_id,
                 type(e).__name__,
@@ -570,8 +571,8 @@ async def birthday_list(interaction: discord.Interaction):
                 f"next birthday {core.format_occurrence(next_birthday, with_year=True)}"
             )
         except ValueError as e:  # a stored date that cannot be read; it must not stop the list
-            log.warning(
-                "Skipped user %s in /birthday list in guild %s: unreadable stored birthday (%s)",
+            log.error(
+                "Skipped user %s in /birthday list in guild %s: unreadable birthday (%s)",
                 user_id,
                 interaction.guild_id,
                 type(e).__name__,
@@ -614,8 +615,8 @@ async def birthday_upcoming(
                 age = core.age_on(year, upcoming_bd) if show_age and year is not None else None
                 upcoming_birthdays.append((user_id, upcoming_bd, age))
         except ValueError as e:  # a stored date that cannot be read; it must not stop the list
-            log.warning(
-                "Skipped user %s in /birthday upcoming in guild %s: unreadable stored birthday (%s)",
+            log.error(
+                "Skipped user %s in /birthday upcoming in guild %s: unreadable birthday (%s)",
                 user_id,
                 interaction.guild_id,
                 type(e).__name__,

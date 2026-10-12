@@ -135,8 +135,8 @@ def test_a_stored_birthday_that_cannot_be_read_is_skipped_and_logged_without_the
     assert f"<@{UNREADABLE[0]}>" not in text
     assert log_lines(caplog) == [
         (
-            logging.WARNING,
-            f"Skipped user {UNREADABLE[0]} in {SKIPPED_IN[view]}: unreadable stored birthday (ValueError)",
+            logging.ERROR,
+            f"Skipped user {UNREADABLE[0]} in {SKIPPED_IN[view]}: unreadable birthday (ValueError)",
         )
     ]
     printed = capsys.readouterr()
@@ -157,7 +157,7 @@ def test_birthday_show_of_a_stored_birthday_that_cannot_be_read_says_so_and_logs
     assert log_lines(caplog) == [
         (
             logging.ERROR,
-            f"Unreadable stored birthday of user {UNREADABLE[0]} in /birthday show in guild {GUILD_ID} (ValueError)",
+            f"Unreadable birthday of user {UNREADABLE[0]} in /birthday show in guild {GUILD_ID} (ValueError)",
         )
     ]
     printed = capsys.readouterr()
