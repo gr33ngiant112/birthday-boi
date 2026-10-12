@@ -14,7 +14,8 @@ import pytest
 import bot
 
 DEV_GUILD_ID = 300000000000019000
-COMMANDS = {"set_birthday", "get_birthday", "list_birthdays", "forecast_birthdays", "forget_birthday"}
+# The top-level commands: the /birthday group, whose subcommands go with it.
+COMMANDS = {"birthday"}
 
 
 @pytest.fixture
@@ -69,7 +70,7 @@ def test_sync_replaces_the_commands_in_every_server(setup_hook):
 def test_a_development_server_gets_every_command_and_nothing_is_synced_globally(setup_hook):
     run, sync, start = setup_hook
     if global_commands() != COMMANDS:
-        pytest.fail(f"setup: expected the five slash commands, got {sorted(global_commands())}")
+        pytest.fail(f"setup: expected the birthday group, got {sorted(global_commands())}")
 
     run(dev_guild_id=DEV_GUILD_ID)
 

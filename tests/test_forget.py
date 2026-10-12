@@ -1,5 +1,6 @@
-"""#9: /forget_birthday deletes a member's birthday from every guild, and when the bot
-leaves a guild it deletes that guild's set and any birthday no other guild can see.
+"""#9: /birthday forget deletes a member's birthday and show_age opt-in from every guild, and
+when the bot leaves a guild it deletes that guild's set and any birthday (with its opt-in) no
+other guild can see.
 
 Setting a birthday also adds the guild to the member's list of guilds,
 user:<id>:guilds, so neither path needs KEYS or SCAN to find a member's guilds.
@@ -47,14 +48,14 @@ def guilds_of(user):
 
 
 def shown_in(gateway, fake_redis, guild, asker, member):
-    """The text of each view in guild: /get_birthday about member, /list_birthdays and
-    /forecast_birthdays run by asker, and the monthly post."""
+    """The text of each view in guild: /birthday show about member, /birthday list and
+    /birthday upcoming (90 days) run by asker, and the monthly post."""
     shown = {
         command: text_of(run_command(gateway, guild, asker, command, *args))
         for command, args in [
-            ("get_birthday", (guild.get_member(member[0]),)),
-            ("list_birthdays", ()),
-            ("forecast_birthdays", ()),
+            ("birthday_show", (guild.get_member(member[0]),)),
+            ("birthday_list", ()),
+            ("birthday_upcoming", (90,)),
         ]
     }
     gateway.sent.clear()
@@ -109,10 +110,10 @@ def test_setting_a_birthday_adds_the_guild_to_the_members_guilds(fake_redis, gat
     guild_a = gateway.add_guild(GUILD_A, "Guild A", [SETTER])
     guild_b = gateway.add_guild(GUILD_B, "Guild B", [SETTER])
 
-    set_in = [run_command(gateway, guild, SETTER, "set_birthday", "12-25-1990") for guild in (guild_a, guild_b)]
+    set_in = [run_command(gateway, guild, SETTER, "birthday_set", 12, 25, 1990) for guild in (guild_a, guild_b)]
 
-    if [text_of(interaction) for interaction in set_in] != ["✅ Your birthday has been set to 12-25-1990."] * 2:
-        pytest.fail(f"setup: /set_birthday should set the birthday, got {[i.sent for i in set_in]!r}")
+    if not all(text_of(interaction).startswith("✅ Your birthday has been set") for interaction in set_in):
+        pytest.fail(f"setup: /birthday set should set the birthday, got {[i.sent for i in set_in]!r}")
     assert fake_redis.smembers(guilds_of(SETTER)) == {str(GUILD_A), str(GUILD_B)}
     # The other tests seed with FakeStore.seed_birthday, which must write exactly this.
     written = fake_redis.contents()
@@ -122,10 +123,10 @@ def test_setting_a_birthday_adds_the_guild_to_the_members_guilds(fake_redis, gat
     assert fake_redis.contents() == written
 
 
-def test_forget_birthday_deletes_the_date_and_every_guild_membership(fake_redis, gateway):
+def test_birthday_forget_deletes_the_date_and_every_guild_membership(fake_redis, gateway):
     gateway.add_guild(GUILD_A, "Guild A", [SETTER, CAROL])
     gateway.add_guild(GUILD_B, "Guild B", [SETTER, CAROL])
-    # SETTER never set the birthday in guild C: /forget_birthday there still reaches every guild.
+    # SETTER never set the birthday in guild C: /birthday forget there still reaches every guild.
     guild_c = gateway.add_guild(GUILD_C, "Guild C", [SETTER])
     for guild_id in (GUILD_A, GUILD_B):
         fake_redis.seed_birthday(guild_id, CAROL[0], CAROL_BIRTHDAY.isoformat())
@@ -133,14 +134,14 @@ def test_forget_birthday_deletes_the_date_and_every_guild_membership(fake_redis,
     for guild_id in (GUILD_A, GUILD_B):
         fake_redis.seed_birthday(guild_id, SETTER[0], SETTER_BIRTHDAY.isoformat())
 
-    interaction = run_command(gateway, guild_c, SETTER, "forget_birthday")
+    interaction = run_command(gateway, guild_c, SETTER, "birthday_forget")
 
     assert replies(interaction) == [(DELETED, True)]
     # Nothing of SETTER's is left, and CAROL's birthday is untouched.
     assert fake_redis.contents() == without_setter
 
 
-def test_no_view_shows_the_birthday_after_forget_birthday(fake_redis, freeze_today, gateway):
+def test_no_view_shows_the_birthday_after_birthday_forget(fake_redis, freeze_today, gateway):
     freeze_today(datetime.date(2026, 10, 1))  # the 1st, so the monthly task posts; Dec 25 is 85 days away
     guilds = [gateway.add_guild(guild_id, "Guild", [SETTER, CAROL]) for guild_id in (GUILD_A, GUILD_B)]
     for guild in guilds:
@@ -148,34 +149,34 @@ def test_no_view_shows_the_birthday_after_forget_birthday(fake_redis, freeze_tod
     month_and_day = SETTER_BIRTHDAY.strftime("%B %d")  # every view shows it
 
     before = {guild.id: shown_in(gateway, fake_redis, guild, CAROL, SETTER) for guild in guilds}
-    run_command(gateway, guilds[0], SETTER, "forget_birthday")
+    run_command(gateway, guilds[0], SETTER, "birthday_forget")
     after = {guild.id: shown_in(gateway, fake_redis, guild, CAROL, SETTER) for guild in guilds}
 
     if any(month_and_day not in text for shown in before.values() for text in shown.values()):
-        pytest.fail(f"setup: every view should show the birthday before /forget_birthday, got {before!r}")
+        pytest.fail(f"setup: every view should show the birthday before /birthday forget, got {before!r}")
     assert [
         (guild_id, view) for guild_id, shown in after.items() for view, text in shown.items() if month_and_day in text
     ] == []
 
 
-def test_forget_birthday_with_nothing_stored_says_so(fake_redis, gateway):
+def test_birthday_forget_with_nothing_stored_says_so(fake_redis, gateway):
     guild = gateway.add_guild(GUILD_A, "Guild A", [SETTER, CAROL])
     fake_redis.seed_birthday(GUILD_A, CAROL[0], CAROL_BIRTHDAY.isoformat())
     before = fake_redis.contents()
 
-    interaction = run_command(gateway, guild, SETTER, "forget_birthday")
+    interaction = run_command(gateway, guild, SETTER, "birthday_forget")
 
     assert replies(interaction) == [(NOTHING_STORED, True)]
     assert fake_redis.contents() == before
 
 
-def test_forget_birthday_says_so_when_it_cannot_reach_the_store(fake_redis, gateway):
+def test_birthday_forget_says_so_when_it_cannot_reach_the_store(fake_redis, gateway):
     guild = gateway.add_guild(GUILD_A, "Guild A", [SETTER])
     fake_redis.seed_birthday(GUILD_A, SETTER[0], SETTER_BIRTHDAY.isoformat())
     server = fake_redis.connection_pool.connection_kwargs["server"]
 
     server.connected = False  # every command now raises redis.ConnectionError
-    interaction = run_command(gateway, guild, SETTER, "forget_birthday")
+    interaction = run_command(gateway, guild, SETTER, "birthday_forget")
     server.connected = True
 
     if fake_redis.get(f"user:{SETTER[0]}:birthday") != SETTER_BIRTHDAY.isoformat():
@@ -183,21 +184,21 @@ def test_forget_birthday_says_so_when_it_cannot_reach_the_store(fake_redis, gate
     assert replies(interaction) == [(NOT_DELETED, True)]
 
 
-def test_forget_birthday_also_clears_a_guild_added_while_it_runs(fake_redis, gateway, monkeypatch):
+def test_birthday_forget_also_clears_a_guild_added_while_it_runs(fake_redis, gateway, monkeypatch):
     guild_a = gateway.add_guild(GUILD_A, "Guild A", [SETTER])
     fake_redis.seed_birthday(GUILD_A, SETTER[0], SETTER_BIRTHDAY.isoformat())
-    # SETTER's /set_birthday in guild B, handled at the same time, lands after
-    # /forget_birthday has read SETTER's guilds and before it deletes anything.
+    # SETTER's /birthday set in guild B, handled at the same time, lands after
+    # /birthday forget has read SETTER's guilds and before it deletes anything.
     ran = change_after_the_bot_reads(
         monkeypatch,
         guilds_of(SETTER),
         lambda: fake_redis.seed_birthday(GUILD_B, SETTER[0], SETTER_BIRTHDAY.isoformat()),
     )
 
-    interaction = run_command(gateway, guild_a, SETTER, "forget_birthday")
+    interaction = run_command(gateway, guild_a, SETTER, "birthday_forget")
 
     if not ran:
-        pytest.fail("setup: the set in guild B should land after /forget_birthday reads SETTER's guilds")
+        pytest.fail("setup: the set in guild B should land after /birthday forget reads SETTER's guilds")
     assert replies(interaction) == [(DELETED, True)]
     # Otherwise guild B's set keeps SETTER, and would show any birthday SETTER sets later, anywhere.
     assert fake_redis.contents() == {}
@@ -221,14 +222,14 @@ def test_leaving_a_guild_deletes_its_set_and_the_birthdays_no_other_guild_can_se
     # Guild A's set is gone, and so are ALICE's date and list of guilds: no guild can
     # see them. SETTER's date stays, shared with guild B only.
     assert fake_redis.contents() == shared_with_b_only
-    get_in_b = run_command(gateway, guild_b, BOB, "get_birthday", guild_b.get_member(SETTER[0]))
-    assert SETTER_BIRTHDAY.strftime("%m-%d-%Y") in text_of(get_in_b)
+    show_in_b = run_command(gateway, guild_b, BOB, "birthday_show", guild_b.get_member(SETTER[0]))
+    assert SETTER_BIRTHDAY.strftime("%B %d") in text_of(show_in_b)
 
 
 def test_leaving_a_guild_keeps_a_birthday_set_in_another_guild_meanwhile(fake_redis, gateway, monkeypatch):
     guild_a = gateway.add_guild(GUILD_A, "Guild A", [SETTER])
     fake_redis.seed_birthday(GUILD_A, SETTER[0], SETTER_BIRTHDAY.isoformat())
-    # SETTER's /set_birthday in guild B lands after the cleanup has read SETTER's
+    # SETTER's /birthday set in guild B lands after the cleanup has read SETTER's
     # guilds (only A, so far) and before it deletes anything.
     ran = change_after_the_bot_reads(
         monkeypatch,
@@ -242,6 +243,39 @@ def test_leaving_a_guild_keeps_a_birthday_set_in_another_guild_meanwhile(fake_re
         pytest.fail("setup: the set in guild B should land after the cleanup reads SETTER's guilds")
     assert fake_redis.contents() == {
         f"user:{SETTER[0]}:birthday": SETTER_BIRTHDAY.isoformat(),
+        f"guild:{GUILD_B}:birthdays": {str(SETTER[0])},
+        guilds_of(SETTER): {str(GUILD_B)},
+    }
+
+
+def test_birthday_forget_also_deletes_the_show_age_opt_in(fake_redis, gateway):
+    guild = gateway.add_guild(GUILD_A, "Guild A", [SETTER, CAROL])
+    fake_redis.seed_birthday(GUILD_A, CAROL[0], CAROL_BIRTHDAY.isoformat(), show_age=True)
+    without_setter = fake_redis.contents()
+    fake_redis.seed_birthday(GUILD_A, SETTER[0], SETTER_BIRTHDAY.isoformat(), show_age=True)
+
+    interaction = run_command(gateway, guild, SETTER, "birthday_forget")
+
+    if replies(interaction) != [(DELETED, True)]:
+        pytest.fail(f"setup: /birthday forget should delete the birthday, got {interaction.sent!r}")
+    # SETTER's opt-in goes with the date; CAROL's stays.
+    assert fake_redis.contents() == without_setter
+
+
+def test_leaving_a_guild_deletes_the_show_age_opt_in_with_the_birthday(fake_redis, gateway):
+    guild_a = gateway.add_guild(GUILD_A, "Guild A", [SETTER, ALICE])
+    gateway.add_guild(GUILD_B, "Guild B", [SETTER])
+    # ALICE shared her birthday with guild A only; SETTER with guilds A and B. Both opted in.
+    fake_redis.seed_birthday(GUILD_A, ALICE[0], "1990-10-15", show_age=True)
+    for guild_id in (GUILD_A, GUILD_B):
+        fake_redis.seed_birthday(guild_id, SETTER[0], SETTER_BIRTHDAY.isoformat(), show_age=True)
+
+    asyncio.run(bot.client.on_guild_remove(guild_a))
+
+    # No guild can see ALICE's birthday, so it goes with her opt-in. Guild B still sees SETTER's.
+    assert fake_redis.contents() == {
+        f"user:{SETTER[0]}:birthday": SETTER_BIRTHDAY.isoformat(),
+        f"user:{SETTER[0]}:show_age": "1",
         f"guild:{GUILD_B}:birthdays": {str(SETTER[0])},
         guilds_of(SETTER): {str(GUILD_B)},
     }

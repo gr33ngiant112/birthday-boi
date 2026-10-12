@@ -44,14 +44,17 @@ POST_TIME = datetime.time(15, 0, tzinfo=datetime.UTC)
 class FakeStore(fakeredis.FakeRedis):
     """A synchronous client on the fake server behind bot.redis_client, for seeding and checks."""
 
-    def seed_birthday(self, guild_id, user_id, birthday):
-        """Store birthday (an ISO date) as /set_birthday run in that guild does.
+    def seed_birthday(self, guild_id, user_id, birthday, show_age=False):
+        """Store birthday ("YYYY-MM-DD", or "--MM-DD" without a year) as /birthday set run in
+        that guild does.
 
-        That is the user's date, the user's id in the guild's set (each guild's views
-        list only the members in its own set), and the guild's id in the user's list
-        of guilds (which /forget_birthday reads).
+        That is the user's date, the user's show_age opt-in ("1", or no key when off), the
+        user's id in the guild's set (each guild's views list only the members in its own
+        set), and the guild's id in the user's list of guilds (which /birthday forget reads).
         """
         self.set(f"user:{user_id}:birthday", birthday)
+        if show_age:
+            self.set(f"user:{user_id}:show_age", "1")
         self.sadd(f"guild:{guild_id}:birthdays", user_id)
         self.sadd(f"user:{user_id}:guilds", guild_id)
 

@@ -23,22 +23,22 @@ OTHER_GUILD_ID = 300000000000009000
 ASKER = (200000000000003001, "asker")
 MEMBER = (200000000000003002, "member")
 UNCACHED = [(200000000000003101 + i, f"uncached-{i}") for i in range(3)]
-# On 2026-10-01 each falls in all three views: the forecast covers the next 90 days,
-# to Dec 30, and the monthly post October to December.
+# On 2026-10-01 each falls in all three views: /birthday upcoming with 90 days covers
+# the next 90 days, to Dec 30, and the monthly post October to December.
 UNCACHED_BIRTHDAYS = ["1990-11-03", "1991-11-24", "1992-12-15"]
 
 
-def run_view(view, gateway, guild, asker):
+def run_view(view, gateway, guild, asker, *args):
     """Run a view that lists a guild's birthdays and return the text it sent there."""
     if view == "monthly post":
         asyncio.run(bot.check_upcoming_birthdays())
         return "\n".join(payload.get("content") or "" for payload in gateway.sent_to(gateway.general(guild)))
     interaction = gateway.interaction(guild, guild.get_member(asker[0]))
-    asyncio.run(getattr(bot, view).callback(interaction))
+    asyncio.run(getattr(bot, view).callback(interaction, *args))
     return "\n".join(content or "" for content, _ in interaction.sent)
 
 
-@pytest.mark.parametrize("view", ["list_birthdays", "forecast_birthdays", "monthly post"])
+@pytest.mark.parametrize("view", ["birthday_list", "birthday_upcoming", "monthly post"])
 def test_view_lists_members_the_bot_has_not_cached(view, fake_redis, freeze_today, gateway):
     freeze_today(datetime.date(2026, 10, 1))  # the 1st, so the monthly task posts
     guild = gateway.add_guild(GUILD_ID, "Guild", [ASKER], uncached=UNCACHED)
@@ -47,7 +47,7 @@ def test_view_lists_members_the_bot_has_not_cached(view, fake_redis, freeze_toda
     if any(guild.get_member(user_id) for user_id, _ in UNCACHED):
         pytest.fail("setup: these members should not be in the member cache")
 
-    text = run_view(view, gateway, guild, ASKER)
+    text = run_view(view, gateway, guild, ASKER, *((90,) if view == "birthday_upcoming" else ()))
 
     assert [user_id for user_id, _ in UNCACHED if f"<@{user_id}>" not in text] == []
 
@@ -55,10 +55,10 @@ def test_view_lists_members_the_bot_has_not_cached(view, fake_redis, freeze_toda
 @pytest.mark.parametrize(
     ("view", "no_birthdays"),
     [
-        ("list_birthdays", "❌ No birthdays have been set yet."),
-        ("forecast_birthdays", "❌ No birthdays in the next 90 days."),
+        ("birthday_list", "❌ No birthdays have been set yet."),
+        ("birthday_upcoming", "❌ No birthdays in the next 30 days."),
     ],
-    ids=["list_birthdays", "forecast_birthdays"],
+    ids=["birthday_list", "birthday_upcoming"],
 )
 def test_guild_with_no_stored_birthdays_gets_the_no_birthdays_message(
     view, no_birthdays, fake_redis, freeze_today, gateway
@@ -102,7 +102,7 @@ def test_no_view_reads_with_keys_or_scan(fake_redis, freeze_today, gateway, monk
 
         return call
 
-    # On the client class, so that pipelines refuse them too: /forget_birthday and
+    # On the client class, so that pipelines refuse them too: /birthday forget and
     # the cleanup when the bot leaves a guild read through a pipeline.
     for name in ("keys", "scan", "scan_iter"):
         monkeypatch.setattr(redis.asyncio.Redis, name, refuse(name))
@@ -110,23 +110,23 @@ def test_no_view_reads_with_keys_or_scan(fake_redis, freeze_today, gateway, monk
     member = guild.get_member(MEMBER[0])
     texts = {}
     for command, args in [
-        ("set_birthday", ("12-25-1991",)),
-        ("get_birthday", (member,)),
-        ("list_birthdays", ()),
-        ("forecast_birthdays", ()),
+        ("birthday_set", (12, 25, 1991)),
+        ("birthday_show", (member,)),
+        ("birthday_list", ()),
+        ("birthday_upcoming", (90,)),
     ]:
         interaction = gateway.interaction(guild, guild.get_member(ASKER[0]))
         asyncio.run(getattr(bot, command).callback(interaction, *args))
         texts[command] = "\n".join(content or "" for content, _ in interaction.sent)
     texts["monthly post"] = run_view("monthly post", gateway, guild, ASKER)
     # Then the paths that delete: ASKER forgets their birthday, and the bot leaves the guild.
-    asyncio.run(bot.forget_birthday.callback(gateway.interaction(guild, guild.get_member(ASKER[0]))))
+    asyncio.run(bot.birthday_forget.callback(gateway.interaction(guild, guild.get_member(ASKER[0]))))
     asyncio.run(bot.client.on_guild_remove(guild))
 
     expected = {
-        "get_birthday": "11-03-1990",
-        "list_birthdays": f"<@{MEMBER[0]}>",
-        "forecast_birthdays": f"<@{MEMBER[0]}>",
+        "birthday_show": "November 03",
+        "birthday_list": f"<@{MEMBER[0]}>",
+        "birthday_upcoming": f"<@{MEMBER[0]}>",
         "monthly post": f"<@{MEMBER[0]}>",
     }
     if any(shown not in texts[view] for view, shown in expected.items()):

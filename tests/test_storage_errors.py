@@ -53,7 +53,8 @@ def bring_redis_back(store):
 
 
 def refuse_writes_of_birth_dates(store):
-    # The default user, which bot.redis_client uses, keeps every key but user:<id>:birthday.
+    # The default user, which bot.redis_client uses, keeps the guild sets and the members' lists
+    # of guilds, but not user:<id>:birthday or user:<id>:show_age.
     store.acl_setuser(
         "default", enabled=True, nopass=True, reset_keys=True, keys=["guild:*", "user:*:guilds"], commands=["+@all"]
     )
@@ -71,9 +72,9 @@ FAILURES = {
 
 
 def set_birthday(gateway, guild):
-    """SETTER sets BIRTHDAY in guild with /set_birthday. Returns the replies as (content, ephemeral)."""
+    """SETTER sets BIRTHDAY in guild with /birthday set. Returns the replies as (content, ephemeral)."""
     interaction = gateway.interaction(guild, guild.get_member(SETTER[0]))
-    asyncio.run(bot.set_birthday.callback(interaction, BIRTHDAY.strftime("%m-%d-%Y")))
+    asyncio.run(bot.birthday_set.callback(interaction, BIRTHDAY.month, BIRTHDAY.day, BIRTHDAY.year))
     return [(content, kwargs.get("ephemeral")) for content, kwargs in interaction.sent]
 
 
@@ -129,12 +130,12 @@ def test_a_failed_save_is_never_reported_as_saved(failure, fake_redis, freeze_to
     assert [form for form in DATE_FORMS if form in caplog.text + printed.out + printed.err] == []
 
 
-@pytest.mark.parametrize("command", ["get_birthday", "list_birthdays", "forecast_birthdays"])
+@pytest.mark.parametrize("command", ["birthday_show", "birthday_list", "birthday_upcoming"])
 def test_a_failed_read_is_never_shown_as_nothing_stored(command, fake_redis, freeze_today, gateway, caplog):
-    freeze_today(datetime.date(2026, 10, 5))  # BIRTHDAY is 81 days away, inside the forecast
+    freeze_today(datetime.date(2026, 10, 5))  # BIRTHDAY is 81 days away, inside /birthday upcoming's 90
     guild = gateway.add_guild(GUILD_ID, "Guild", [SETTER, MEMBER])
     fake_redis.seed_birthday(GUILD_ID, MEMBER[0], BIRTHDAY.isoformat())
-    args = (guild.get_member(MEMBER[0]),) if command == "get_birthday" else ()
+    args = {"birthday_show": (guild.get_member(MEMBER[0]),), "birthday_upcoming": (90,)}.get(command, ())
 
     def run_command():
         interaction = gateway.interaction(guild, guild.get_member(SETTER[0]))

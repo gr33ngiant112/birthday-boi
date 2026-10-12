@@ -46,11 +46,23 @@ redis_client = None
 # Discord rejects messages longer than this.
 MESSAGE_LIMIT = 2000
 
-# /forecast_birthdays lists the birthdays from today to this many days ahead.
-FORECAST_DAYS = 90
+# /birthday upcoming lists the birthdays from today to this many days ahead, unless the member
+# picks another number of days, from 1 to UPCOMING_MAX_DAYS.
+UPCOMING_DAYS = 30
+UPCOMING_MAX_DAYS = 366
 
 # A birth year may be at most this many years before the current year.
 MAX_AGE_YEARS = 120
+
+# The newest year /birthday set offers. Discord reads it when the command is defined, so the
+# handler also refuses a date after today.
+LATEST_BIRTH_YEAR = datetime.date.today().year  # noqa: DTZ011 - the host's date
+
+# The year that stands in for a birthday given without one: a leap year, so Feb 29 is a date.
+LEAP_YEAR = 2000
+
+# What a member is told when the month has no such day, or the year no Feb 29.
+NO_SUCH_DATE = "❌ That date does not exist. Please check it and try again."
 
 # The monthly post goes out at this time on the 1st. There is no timezone setting, so UTC.
 MONTHLY_POST_TIME = datetime.time(hour=15, tzinfo=datetime.UTC)
@@ -74,13 +86,19 @@ class StoreUnavailable(Exception):
     pass
 
 
-# Store a birthday and share it with the guild where it was set. Raises StoreUnavailable.
-async def set_birthday_redis(guild_id, user_id, birthday):
+# Store a birthday and share it with the guild where it was set: "YYYY-MM-DD", or ISO 8601's
+# year-less "--MM-DD". show_age is the member's opt-in to show the year and age, stored as
+# user:<id>:show_age = "1" and deleted when off. Raises StoreUnavailable.
+async def set_birthday_redis(guild_id, user_id, birthday, show_age=False):
     try:
-        # One transaction, so the date, the guild's membership and the member's list
-        # of guilds (which /forget_birthday reads) are saved together.
+        # One transaction, so the date, the opt-in, the guild's membership and the member's
+        # list of guilds (which /birthday forget reads) are saved together.
         async with redis_client.pipeline(transaction=True) as pipe:
             pipe.set(f"user:{user_id}:birthday", birthday)
+            if show_age:
+                pipe.set(f"user:{user_id}:show_age", "1")
+            else:
+                pipe.delete(f"user:{user_id}:show_age")
             pipe.sadd(f"guild:{guild_id}:birthdays", user_id)
             pipe.sadd(f"user:{user_id}:guilds", guild_id)
             await pipe.execute()
@@ -88,51 +106,63 @@ async def set_birthday_redis(guild_id, user_id, birthday):
         raise StoreUnavailable(type(e).__name__) from e
 
 
-# Get a member's birthday if they shared it with this guild. Raises StoreUnavailable.
+# Get a member's birthday and show_age opt-in, (birthday, show_age), if they shared the
+# birthday with this guild; otherwise (None, False). Raises StoreUnavailable.
 async def get_birthday_redis(guild_id, user_id):
     try:
         if await redis_client.sismember(f"guild:{guild_id}:birthdays", user_id):
-            birthday = await redis_client.get(f"user:{user_id}:birthday")
+            birthday, show_age = await redis_client.mget(f"user:{user_id}:birthday", f"user:{user_id}:show_age")
             if birthday:
-                return birthday
+                return birthday, show_age == "1"
     except redis.RedisError as e:
         raise StoreUnavailable(type(e).__name__) from e
-    return None
+    return None, False
 
 
-# Get the (user_id, birthday) pairs shared with a guild. Raises StoreUnavailable.
+# Get the (user_id, birthday, show_age) of each member who shared a birthday with a guild.
+# Raises StoreUnavailable.
 async def get_guild_birthdays_redis(guild_id):
     birthdays = []
     try:
         user_ids = list(await redis_client.smembers(f"guild:{guild_id}:birthdays"))
         if user_ids:
-            # MGET answers with one value per key, in order.
-            dates = await redis_client.mget([f"user:{user_id}:birthday" for user_id in user_ids])
-            birthdays = [(user_id, birthday) for user_id, birthday in zip(user_ids, dates, strict=True) if birthday]
+            # MGET answers with one value per key, in order: each member's date, then each
+            # member's opt-in.
+            values = await redis_client.mget(
+                [f"user:{user_id}:birthday" for user_id in user_ids]
+                + [f"user:{user_id}:show_age" for user_id in user_ids]
+            )
+            dates, show_ages = values[: len(user_ids)], values[len(user_ids) :]
+            birthdays = [
+                (user_id, birthday, show_age == "1")
+                for user_id, birthday, show_age in zip(user_ids, dates, show_ages, strict=True)
+                if birthday
+            ]
     except redis.RedisError as e:
         raise StoreUnavailable(type(e).__name__) from e
     return birthdays
 
 
-# Delete a member's birthday and remove them from every guild's set. Returns whether
-# anything was stored. Redis errors are raised, so a failed delete is never reported as done.
+# Delete a member's birthday and show_age opt-in, and remove them from every guild's set.
+# Returns whether anything was stored. Redis errors are raised, so a failed delete is never
+# reported as done.
 async def forget_birthday_redis(user_id):
     guilds_key = f"user:{user_id}:guilds"
 
     async def delete_all(pipe):
         guild_ids = await pipe.smembers(guilds_key)
         pipe.multi()
-        pipe.delete(f"user:{user_id}:birthday", guilds_key)
+        pipe.delete(f"user:{user_id}:birthday", f"user:{user_id}:show_age", guilds_key)
         for guild_id in guild_ids:
             pipe.srem(f"guild:{guild_id}:birthdays", user_id)
 
-    # transaction() WATCHes the member's list of guilds: if a /set_birthday adds a guild
+    # transaction() WATCHes the member's list of guilds: if a /birthday set adds a guild
     # after the read, the delete is not applied and runs again with the new list.
     return any(await redis_client.transaction(delete_all, guilds_key))
 
 
 # Stop sharing a member's birthday with one guild. When no other guild has it, no guild
-# can see the date, so it is deleted along with the member's list of guilds.
+# can see the date, so it is deleted along with the member's opt-in and list of guilds.
 async def remove_birthday_from_guild_redis(guild_id, user_id):
     guilds_key = f"user:{user_id}:guilds"
 
@@ -143,7 +173,7 @@ async def remove_birthday_from_guild_redis(guild_id, user_id):
         if other_guild_ids:
             pipe.srem(guilds_key, guild_id)
         else:
-            pipe.delete(f"user:{user_id}:birthday", guilds_key)
+            pipe.delete(f"user:{user_id}:birthday", f"user:{user_id}:show_age", guilds_key)
 
     # WATCHed as in forget_birthday_redis, so a guild added meanwhile keeps the date.
     await redis_client.transaction(remove, guilds_key)
@@ -189,6 +219,23 @@ def birth_date_error(birthday_date, today):
     return None
 
 
+# The (month, day, year) of a stored birthday, "YYYY-MM-DD" or ISO 8601's year-less "--MM-DD",
+# whose year is None. Raises ValueError for anything else.
+def parse_birthday(birthday):
+    if birthday.startswith("--"):
+        date = datetime.date.fromisoformat(f"{LEAP_YEAR}{birthday[1:]}")
+        return date.month, date.day, None
+    date = datetime.date.fromisoformat(birthday)
+    return date.month, date.day, date.year
+
+
+# A birthday as the replies show it: "December 25", or "December 25, 1990" with a year, which
+# callers pass only when the member opted in with show_age.
+def format_birthday(month, day, year=None):
+    month_and_day = datetime.date(LEAP_YEAR, month, day).strftime("%B %d")
+    return month_and_day if year is None else f"{month_and_day}, {year}"
+
+
 # Background task: every day at MONTHLY_POST_TIME, and on the 1st it posts the upcoming birthdays
 @tasks.loop(time=MONTHLY_POST_TIME)
 async def check_upcoming_birthdays():
@@ -215,10 +262,11 @@ async def check_upcoming_birthdays():
             continue
 
         upcoming = []
-        for user_id, birthday_str in birthdays:
+        # The post never shows a year or age, so it ignores the show_age opt-in.
+        for user_id, birthday_str, _ in birthdays:
             try:
-                bd = datetime.date.fromisoformat(birthday_str)
-                upcoming_bd = next_occurrence(bd.month, bd.day, today)
+                month, day, _ = parse_birthday(birthday_str)
+                upcoming_bd = next_occurrence(month, day, today)
                 if upcoming_bd.month in [today.month, next_month, month_after]:
                     upcoming.append((upcoming_bd, user_id))
             except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the post; #37 narrows this
@@ -300,97 +348,129 @@ async def on_guild_remove(guild):
         await remove_birthday_from_guild_redis(guild.id, user_id)
 
 
-# Slash command to set a birthday
-@client.tree.command(
-    name="set_birthday",
-    description="Set your birthday and share it with this server (format: MM-DD-YYYY or YYYY-MM-DD)",
+# The /birthday commands. They replaced /set_birthday, /get_birthday, /list_birthdays,
+# /forecast_birthdays and /forget_birthday. A group's subcommands cannot have settings of their
+# own, so the group's apply to all five: Discord offers them in servers only (contexts, and
+# dm_permission for older clients), never in DMs. Every reply is ephemeral: only the member
+# who runs a command sees it.
+birthday_group = app_commands.Group(
+    name="birthday",
+    description="Set, show and list the birthdays shared with this server",
+    guild_only=True,
+    allowed_contexts=app_commands.AppCommandContext(guild=True),
 )
-@app_commands.describe(date="The date of your birthday (MM-DD-YYYY or YYYY-MM-DD)")
-@app_commands.guild_only()
-async def set_birthday(interaction: discord.Interaction, date: str):
+
+# The 12 months /birthday set offers: Discord shows the name and sends the month's number.
+MONTH_CHOICES = [app_commands.Choice(name=calendar.month_name[month], value=month) for month in range(1, 13)]
+
+
+# Set a birthday. Discord accepts only these months, days 1 to 31 and years 1900 to
+# LATEST_BIRTH_YEAR, so a date such as Feb 30, Apr 31 or a future date is refused here.
+@birthday_group.command(name="set", description="Set your birthday and share it with this server")
+@app_commands.describe(
+    month="The month of your birthday",
+    day="The day of the month",
+    year="The year you were born, if you want to give it. Others see it only with show_age",
+    show_age="Let others see your birth year and age, if you give the year. Off by default",
+)
+@app_commands.choices(month=MONTH_CHOICES)
+async def birthday_set(
+    interaction: discord.Interaction,
+    month: int,
+    day: app_commands.Range[int, 1, 31],
+    year: app_commands.Range[int, 1900, LATEST_BIRTH_YEAR] | None = None,
+    show_age: bool = False,
+):
     await interaction.response.defer(ephemeral=True)  # Prevent Discord timeout
-    user_id = interaction.user.id
     try:
-        # Try MM-DD-YYYY first, then fallback to YYYY-MM-DD
-        try:
-            birthday_date = datetime.datetime.strptime(date, "%m-%d-%Y").date()  # noqa: DTZ007 - date only
-        except ValueError:
-            birthday_date = datetime.datetime.strptime(date, "%Y-%m-%d").date()  # noqa: DTZ007 - date only
+        # Without a year, LEAP_YEAR stands in, so Feb 29 is a date.
+        birthday_date = datetime.date(LEAP_YEAR if year is None else year, month, day)
+    except ValueError:
+        await interaction.followup.send(NO_SUCH_DATE, ephemeral=True)
+        return
+    if year is None:
+        birthday = birthday_date.strftime("--%m-%d")  # ISO 8601's date without a year
+    else:
         # A date no one could be born on is refused, not stored.
         error = birth_date_error(birthday_date, datetime.date.today())  # noqa: DTZ011 - the host's date
         if error:
             await interaction.followup.send(error, ephemeral=True)
             return
-        # Store in Redis in ISO format (YYYY-MM-DD), shared with this server
-        await set_birthday_redis(interaction.guild_id, user_id, birthday_date.isoformat())
-        # Respond with birthday formatted as MM-DD-YYYY
-        await interaction.followup.send(
-            f"✅ Your birthday has been set to {birthday_date.strftime('%m-%d-%Y')}.", ephemeral=True
-        )
-    except ValueError:
-        await interaction.followup.send("❌ Invalid date format! Use MM-DD-YYYY or YYYY-MM-DD.", ephemeral=True)
-    except StoreUnavailable as e:
-        log.error("Storage unavailable in /set_birthday (%s)", e)
-        await interaction.followup.send(SAVE_FAILED, ephemeral=True)
-
-
-# Command to query birthday
-@client.tree.command(name="get_birthday", description="Get a user's birthday")
-@app_commands.describe(user="The user whose birthday you want to look up")
-@app_commands.guild_only()
-async def get_birthday(interaction: discord.Interaction, user: discord.Member):
-    await interaction.response.defer(ephemeral=True)  # Answer before reading Redis
-    user_id = user.id
+        birthday = birthday_date.isoformat()
     try:
-        birthday_str = await get_birthday_redis(interaction.guild_id, user_id)
+        # Stored and shared with this server
+        await set_birthday_redis(interaction.guild_id, interaction.user.id, birthday, show_age)
     except StoreUnavailable as e:
-        log.error("Storage unavailable in /get_birthday (%s)", e)
+        log.error("Storage unavailable in /birthday set (%s)", e)
+        await interaction.followup.send(SAVE_FAILED, ephemeral=True)
+        return
+    if year is not None and show_age:
+        shown = "Others see the month and day, and your birth year and age."
+    else:
+        shown = "Others see only the month and day."
+    await interaction.followup.send(
+        f"✅ Your birthday has been set to {format_birthday(month, day, year)}. {shown}", ephemeral=True
+    )
+
+
+# Show a member's birthday
+@birthday_group.command(name="show", description="Show a member's birthday, if they shared it with this server")
+@app_commands.describe(member="The member whose birthday you want to see")
+async def birthday_show(interaction: discord.Interaction, member: discord.Member):
+    await interaction.response.defer(ephemeral=True)  # Answer before reading Redis
+    user_id = member.id
+    try:
+        birthday_str, show_age = await get_birthday_redis(interaction.guild_id, user_id)
+    except StoreUnavailable as e:
+        log.error("Storage unavailable in /birthday show (%s)", e)
         await interaction.followup.send(READ_FAILED, ephemeral=True)
         return
     if birthday_str:
         try:
-            # Parse the stored birthday
-            birthdate = datetime.date.fromisoformat(birthday_str)
+            # Parse the stored birthday. The year and age show only if the member opted in.
+            month, day, year = parse_birthday(birthday_str)
+            shown_year = year if show_age else None
             # Compute the next birthday, today or later
             today = datetime.date.today()  # noqa: DTZ011 - the host's date
-            next_birthday = next_occurrence(birthdate.month, birthdate.day, today)
+            next_birthday = next_occurrence(month, day, today)
+            age = "" if shown_year is None else f", turning {next_birthday.year - shown_year}"
 
             await interaction.followup.send(
-                f"🎂 **{user.mention}'s Birthday:**\n"
-                f"{birthdate.strftime('%m-%d-%Y')} - next birthday {next_birthday.strftime('%A, %B %d %Y')}",
+                f"🎂 **{member.mention}'s Birthday:**\n"
+                f"{format_birthday(month, day, shown_year)} - "
+                f"next birthday {next_birthday.strftime('%A, %B %d %Y')}{age}",
                 ephemeral=True,
             )
         except Exception as e:  # noqa: BLE001 - the member gets an error reply, not silence; #37 narrows this
             print(f"❌ Error processing birthday for user {user_id}: {e}")
             await interaction.followup.send("❌ An error occurred while retrieving the birthday.", ephemeral=True)
     else:
-        await interaction.followup.send(f"❌ {user.mention} has not set their birthday yet.", ephemeral=True)
+        await interaction.followup.send(f"❌ {member.mention} has not set their birthday yet.", ephemeral=True)
 
 
-# Command to list all birthdays
-@client.tree.command(name="list_birthdays", description="List all birthdays in the server")
-@app_commands.guild_only()
-async def list_birthdays(interaction: discord.Interaction):
+# List this server's birthdays
+@birthday_group.command(name="list", description="List the birthdays shared with this server")
+async def birthday_list(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)  # Prevent timeout while fetching data
     try:
         birthdays = await get_guild_birthdays_redis(interaction.guild_id)
     except StoreUnavailable as e:
-        log.error("Storage unavailable in /list_birthdays (%s)", e)
+        log.error("Storage unavailable in /birthday list (%s)", e)
         await interaction.followup.send(READ_FAILED, ephemeral=True)
         return
 
     # One line per member. <@id> shows the member's name without the member cache.
     lines = []
     today = datetime.date.today()  # noqa: DTZ011 - the host's date
-    for user_id, birthday_str in birthdays:
+    for user_id, birthday_str, show_age in birthdays:
         try:
-            # Parse the stored birthday
-            birthdate = datetime.date.fromisoformat(birthday_str)
+            # Parse the stored birthday. The year shows only if the member opted in.
+            month, day, year = parse_birthday(birthday_str)
             # Compute the next birthday, today or later
-            next_birthday = next_occurrence(birthdate.month, birthdate.day, today)
+            next_birthday = next_occurrence(month, day, today)
 
             lines.append(
-                f"<@{user_id}> - {birthdate.strftime('%m-%d-%Y')} - "
+                f"<@{user_id}> - {format_birthday(month, day, year if show_age else None)} - "
                 f"next birthday {next_birthday.strftime('%A, %B %d %Y')}"
             )
         except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the list; #37 narrows this
@@ -403,48 +483,55 @@ async def list_birthdays(interaction: discord.Interaction):
         await interaction.followup.send("❌ No birthdays have been set yet.", ephemeral=True)
 
 
-# Command to forecast upcoming birthdays
-@client.tree.command(name="forecast_birthdays", description=f"Show birthdays in the next {FORECAST_DAYS} days")
-@app_commands.guild_only()
-async def forecast_birthdays(interaction: discord.Interaction):
+# Show the upcoming birthdays
+@birthday_group.command(
+    name="upcoming", description=f"Show the birthdays in the next {UPCOMING_DAYS} days, or in the days you choose"
+)
+@app_commands.describe(
+    days=f"How many days ahead to look, from 1 to {UPCOMING_MAX_DAYS} ({UPCOMING_DAYS} if you leave it out)"
+)
+async def birthday_upcoming(
+    interaction: discord.Interaction, days: app_commands.Range[int, 1, UPCOMING_MAX_DAYS] = UPCOMING_DAYS
+):
     await interaction.response.defer(ephemeral=True)  # Prevent timeout while fetching data
     today = datetime.date.today()  # noqa: DTZ011 - the host's date
     try:
         birthdays = await get_guild_birthdays_redis(interaction.guild_id)
     except StoreUnavailable as e:
-        log.error("Storage unavailable in /forecast_birthdays (%s)", e)
+        log.error("Storage unavailable in /birthday upcoming (%s)", e)
         await interaction.followup.send(READ_FAILED, ephemeral=True)
         return
     upcoming_birthdays = []
 
-    for user_id, birthday_str in birthdays:
+    for user_id, birthday_str, show_age in birthdays:
         try:
-            bd = datetime.date.fromisoformat(birthday_str)
-            upcoming_bd = next_occurrence(bd.month, bd.day, today)
-            # next_occurrence() is today or later, so this keeps 0 to FORECAST_DAYS days away.
-            if (upcoming_bd - today).days <= FORECAST_DAYS:
-                # Calculate age on the next birthday
-                age = upcoming_bd.year - bd.year
+            month, day, year = parse_birthday(birthday_str)
+            upcoming_bd = next_occurrence(month, day, today)
+            # next_occurrence() is today or later, so this keeps 0 to `days` days away.
+            if (upcoming_bd - today).days <= days:
+                # The age on the next birthday, only if the member opted in and gave a year
+                age = upcoming_bd.year - year if show_age and year is not None else None
                 upcoming_birthdays.append((user_id, upcoming_bd, age))
-        except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the forecast; #37 narrows this
+        except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the list; #37 narrows this
             print(f"❌ Error processing birthday for user {user_id}: {e}")
 
     if upcoming_birthdays:
         # One line per member. <@id> shows the member's name without the member cache.
         lines = [
-            f"<@{user_id}> - {upcoming_bd.strftime('%A, %B %d')} - turning {age}"
+            f"<@{user_id}> - {upcoming_bd.strftime('%A, %B %d')}" + ("" if age is None else f" - turning {age}")
             for user_id, upcoming_bd, age in upcoming_birthdays
         ]
         for chunk in chunk_messages("🎉 **Upcoming Birthdays:**", lines):
             await interaction.followup.send(chunk, ephemeral=True)
     else:
-        await interaction.followup.send(f"❌ No birthdays in the next {FORECAST_DAYS} days.", ephemeral=True)
+        await interaction.followup.send(
+            f"❌ No birthdays in the next {days} {'day' if days == 1 else 'days'}.", ephemeral=True
+        )
 
 
-# Command to delete your birthday from every server
-@client.tree.command(name="forget_birthday", description="Delete your birthday from every server")
-@app_commands.guild_only()
-async def forget_birthday(interaction: discord.Interaction):
+# Delete your birthday from every server
+@birthday_group.command(name="forget", description="Delete your birthday from every server")
+async def birthday_forget(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)  # Answer before reading Redis
     try:
         forgotten = await forget_birthday_redis(interaction.user.id)
@@ -460,6 +547,10 @@ async def forget_birthday(interaction: discord.Interaction):
         await interaction.followup.send(
             "✅ You had no birthday stored, so there was nothing to delete.", ephemeral=True
         )
+
+
+# The group and its five subcommands are the bot's only slash commands.
+client.tree.add_command(birthday_group)
 
 
 # Send Redis a PING at startup. It goes through a client of its own, whose connections are
