@@ -11,9 +11,9 @@
 # own because Dependabot's docker updates read only FROM lines, so they bump this one too.
 FROM ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 AS uv
 
-# python:3.11-slim (Python 3.11.17 on Debian 13 when pinned), pinned to its digest. spaCy 3.5.0,
-# which pyproject.toml pins, has wheels for CPython 3.11 at the newest, built for glibc.
-FROM python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce AS runtime
+# python:3.12-slim (Python 3.12.15 on Debian 13 when pinned), pinned to its digest. pyproject.toml's
+# requires-python and .python-version name the same Python version.
+FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS runtime
 
 # print() output reaches `docker logs` at once instead of waiting in a buffer.
 ENV PYTHONUNBUFFERED=1

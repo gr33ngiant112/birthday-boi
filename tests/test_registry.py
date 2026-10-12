@@ -26,9 +26,9 @@ import bot
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-EXPECTED_COMMANDS = {"set_birthday", "get_birthday", "list_birthdays", "forecast_birthdays", "forget_birthday"}
+EXPECTED_COMMANDS = {"birthday set", "birthday show", "birthday list", "birthday upcoming", "birthday forget"}
 EXPECTED_LOOPS = {"check_upcoming_birthdays"}
-EXPECTED_EVENT_HANDLERS = {"on_ready", "on_guild_remove", "on_message"}
+EXPECTED_EVENT_HANDLERS = {"on_ready", "on_guild_remove"}
 
 
 def assert_same(kind, found, expected):
@@ -106,7 +106,7 @@ def test_setup_hook_starts_the_task_loops(monkeypatch):
 
 
 def test_subcommands_are_named_with_their_groups():
-    # bot.py has no groups yet, so this checks command_names() on commands in nested groups.
+    # bot.py's group has no group inside it, so this checks command_names() on nested groups.
     group = app_commands.Group(name="birthday", description="Birthdays")
     admin = app_commands.Group(name="admin", description="Admin", parent=group)
 

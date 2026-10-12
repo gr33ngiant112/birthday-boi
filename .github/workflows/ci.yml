@@ -39,7 +39,7 @@ jobs:
         run: docker build --tag birthday-boi .
       # The test image also has the dev packages, and fakeredis brings in redis, so a runtime
       # dependency missing from pyproject.toml could still pass the tests. Importing bot.py
-      # here (spaCy loads its model on import) checks the bot's image on its own.
+      # here checks the bot's image on its own.
       - name: Import bot.py in the bot's image
         run: docker run --rm --network none birthday-boi python bot.py --help
       - name: Build the test image (the bot's image, the dev tools and the tests)

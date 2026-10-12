@@ -350,3 +350,20 @@ def test_import_without_config_from_an_empty_directory(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert pathlib.Path(result.stdout.splitlines()[-1]) == REPO_ROOT / "bot.py"
+
+
+def test_import_loads_no_spacy(tmp_path):
+    # #24 and #30: importing bot loaded spaCy and its English model, which only the @mention date
+    # parser used; #30 measured 0.87 s more startup and peak memory up from 46 MB to 160 MB. Members
+    # now type dates as slash command options. A fresh interpreter, so no earlier import here counts.
+    script = IMPORT_BOT + "print(sorted(m for m in sys.modules if m.split('.')[0] in ('spacy', 'en_core_web_sm')))\n"
+    env = {k: v for k, v in os.environ.items() if k not in ("DISCORD_TOKEN", "REDIS_URL", "DYNO")}
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH")]))
+
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=300
+    )
+
+    if result.returncode != 0 or len(result.stdout.splitlines()) < 2:
+        pytest.fail(f"setup: importing bot should succeed and print the modules, got {result!r}")
+    assert result.stdout.splitlines()[-1] == "[]"

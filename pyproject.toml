@@ -6,22 +6,14 @@
 name = "birthday-boi"
 # uv requires a version. The bot has no releases, so it stays 0.0.0.
 version = "0.0.0"
-# spaCy 3.5.0 has CPython wheels up to 3.11 only, so the bot stays on 3.11 until spaCy goes
-# (ADR 0001, #30). .python-version and the Dockerfile's python:3.11-slim name the same version.
-requires-python = ">=3.11,<3.12"
+# One Python minor version. Upgrades to the next one are made by hand: requires-python,
+# .python-version and the Dockerfile's python:3.12-slim name the same version.
+requires-python = ">=3.12,<3.13"
 dependencies = [
     # Floors: the versions in uv.lock when it was created, which the tests passed with.
     "discord.py>=2.7.1",
     "python-dotenv>=1.2.4",
     "redis>=8.1.0",
-    # spaCy and the pins after it serve only the @mention date parser, which Phase 4 removes
-    # (ADR 0001, #30).
-    "spacy==3.5.0",
-    "thinc==8.1.7",  # spaCy 3.5.0 takes thinc 8.1.x; 8.1.7 imports with numpy 1.23.5 (#5)
-    "numpy==1.23.5",  # 1.22.4 has no CPython 3.11 wheel and broke `import spacy` (#5)
-    "setuptools<82",  # spaCy 3.5 imports pkg_resources, which setuptools 82 removed
-    # spaCy's English model, the wheel from spaCy's own release; uv.lock records its sha256 (#21).
-    "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.5.0/en_core_web_sm-3.5.0-py3-none-any.whl",
 ]
 
 [dependency-groups]
