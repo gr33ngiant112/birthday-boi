@@ -52,7 +52,7 @@ uv sync --locked
 source .venv/bin/activate
 ```
 
-4. Run `pre-commit install`. Before each commit, the hook runs ruff's syntax checks and the command registry test with this venv's ruff and pytest, so commit with the venv active.
+4. Run `pre-commit install`. Before each commit, the hooks run `ruff check`, `ruff format --check` and the command registry test with this venv's ruff and pytest, so commit with the venv active. `ruff format .` fixes what the format check finds.
 
 ### Building and testing the Docker image
 
@@ -64,7 +64,7 @@ docker build --target test --tag birthday-boi:test .
 docker run --rm --network none birthday-boi:test
 ```
 
-The first command builds the bot's image. The second builds the test image: the bot's image plus the dev tools and the tests. The third runs ruff's syntax checks and the tests in a container with no network, and exits with a non-zero status if either fails. `.dockerignore` keeps `.env` files out of the build context, so they never reach an image.
+The first command builds the bot's image. The second builds the test image: the bot's image plus the dev tools and the tests. The third runs `ruff check`, `ruff format --check` and the tests in a container with no network, and exits with a non-zero status if any of them fails. `.dockerignore` keeps `.env` files out of the build context, so they never reach an image.
 
 ### Installing
 
