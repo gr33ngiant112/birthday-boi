@@ -21,6 +21,9 @@ dependencies = [
 # Floors: the versions CI pinned before uv.lock, and the versions uv.lock has.
 dev = [
     "fakeredis>=2.39.0",
+    # Property tests of core.py (#32). 6.168.4 was the newest release at least 7 days old, as
+    # Dependabot's cooldown waits for.
+    "hypothesis>=6.168.4",
     "pre-commit>=4.6.2",
     "pytest>=9.1.1",
     "ruff>=0.16.10",

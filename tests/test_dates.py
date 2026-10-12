@@ -22,6 +22,7 @@ import datetime
 import pytest
 
 import bot
+import core
 
 LEAP_DAY_BIRTHDAY = "2000-02-29"
 LEAPLING = (200000000000001001, "leapling")
@@ -130,7 +131,7 @@ def test_monthly_post_includes_a_leap_day_birthday(fake_redis, freeze_today, gat
 )
 def test_next_occurrence_of_a_leap_day_birthday(today, expected):
     # In a year without Feb 29, the birthday falls on Feb 28.
-    assert bot.next_occurrence(2, 29, today) == expected
+    assert core.next_occurrence(2, 29, today) == expected
 
 
 def test_next_occurrence_of_every_month_and_day_from_every_day_of_four_years():
@@ -152,7 +153,7 @@ def test_next_occurrence_of_every_month_and_day_from_every_day_of_four_years():
             nearest[(2, 29)] = day
         if day <= last_today:
             for month, day_of_month in every_month_and_day:
-                got = bot.next_occurrence(month, day_of_month, day)
+                got = core.next_occurrence(month, day_of_month, day)
                 if got != nearest[(month, day_of_month)]:
                     wrong.append(((month, day_of_month), day, got, nearest[(month, day_of_month)]))
         day -= one_day

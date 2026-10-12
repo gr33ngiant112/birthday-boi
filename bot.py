@@ -15,6 +15,8 @@ import sys
 import time
 from urllib.parse import urlparse
 
+import core
+
 # Read from the environment by main(), so importing this module reads no config.
 TOKEN = None
 REDIS_URL = None
@@ -48,23 +50,14 @@ def create_redis_client():
 # Created by main(); tests replace it with a fake.
 redis_client = None
 
-# Discord rejects messages longer than this.
-MESSAGE_LIMIT = 2000
-
 # /birthday upcoming lists the birthdays from today to this many days ahead, unless the member
 # picks another number of days, from 1 to UPCOMING_MAX_DAYS.
 UPCOMING_DAYS = 30
 UPCOMING_MAX_DAYS = 366
 
-# A birth year may be at most this many years before the current year.
-MAX_AGE_YEARS = 120
-
 # The newest year /birthday set offers. Discord reads it when the command is defined, so the
 # handler also refuses a date after today.
 LATEST_BIRTH_YEAR = datetime.date.today().year  # noqa: DTZ011 - the host's date
-
-# The year that stands in for a birthday given without one: a leap year, so Feb 29 is a date.
-LEAP_YEAR = 2000
 
 # What a member is told when the month has no such day, or the year no Feb 29.
 NO_SUCH_DATE = "❌ That date does not exist. Please check it and try again."
@@ -193,65 +186,14 @@ async def mark_monthly_post_redis(guild_id, month):
         raise StoreUnavailable(type(e).__name__) from e
 
 
-# Split a header and lines into messages of at most MESSAGE_LIMIT characters,
-# never splitting a line. Every line is a mention and a date, far below the limit.
-def chunk_messages(header, lines):
-    chunks = [header]
-    for line in lines:
-        if len(chunks[-1]) + 1 + len(line) > MESSAGE_LIMIT:
-            chunks.append(line)
-        else:
-            chunks[-1] += "\n" + line
-    return chunks
-
-
-# The first date on or after today with this month and day. A Feb 29 birthday falls
-# on Feb 28 in years without Feb 29, so it still comes once a year.
-def next_occurrence(month, day, today):
-    # This year's date if it has not passed yet, otherwise next year's.
-    year = today.year if (month, day) >= (today.month, today.day) else today.year + 1
-    if (month, day) == (2, 29) and not calendar.isleap(year):
-        day = 28
-    return datetime.date(year, month, day)
-
-
-# Why a date cannot be a birth date, or None if it can.
-def birth_date_error(birthday_date, today):
-    if birthday_date > today:
-        return "❌ That date is in the future. Please check the year and try again."
-    if birthday_date.year < today.year - MAX_AGE_YEARS:
-        return f"❌ That date is more than {MAX_AGE_YEARS} years ago. Please check the year and try again."
-    return None
-
-
-# The (month, day, year) of a stored birthday, "YYYY-MM-DD" or ISO 8601's year-less "--MM-DD",
-# whose year is None. Raises ValueError for anything else.
-def parse_birthday(birthday):
-    if birthday.startswith("--"):
-        date = datetime.date.fromisoformat(f"{LEAP_YEAR}{birthday[1:]}")
-        return date.month, date.day, None
-    date = datetime.date.fromisoformat(birthday)
-    return date.month, date.day, date.year
-
-
-# A birthday as the replies show it: "December 25", or "December 25, 1990" with a year, which
-# callers pass only when the member opted in with show_age.
-def format_birthday(month, day, year=None):
-    month_and_day = datetime.date(LEAP_YEAR, month, day).strftime("%B %d")
-    return month_and_day if year is None else f"{month_and_day}, {year}"
-
-
 # Background task: every day at MONTHLY_POST_TIME, and on the 1st it posts the upcoming birthdays
 @tasks.loop(time=MONTHLY_POST_TIME)
 async def check_upcoming_birthdays():
     # The date in UTC, the zone of MONTHLY_POST_TIME, whatever the host's zone is.
     today = datetime.datetime.now(datetime.UTC).date()
     # Only run on the first day of the month.
-    if today.day != 1:
+    if not core.is_monthly_post_day(today):
         return
-
-    next_month = (today.month % 12) + 1
-    month_after = ((today.month + 1) % 12) + 1
 
     # Each guild's post lists only the members who shared their birthday with that guild.
     for guild in client.guilds:
@@ -270,9 +212,9 @@ async def check_upcoming_birthdays():
         # The post never shows a year or age, so it ignores the show_age opt-in.
         for user_id, birthday_str, _ in birthdays:
             try:
-                month, day, _ = parse_birthday(birthday_str)
-                upcoming_bd = next_occurrence(month, day, today)
-                if upcoming_bd.month in [today.month, next_month, month_after]:
+                month, day, _ = core.parse_birthday(birthday_str)
+                upcoming_bd = core.monthly_post_occurrence(month, day, today)
+                if upcoming_bd is not None:
                     upcoming.append((upcoming_bd, user_id))
             except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the post; #37 narrows this
                 print(f"❌ Error processing birthday for user {user_id}: {e}")
@@ -283,16 +225,16 @@ async def check_upcoming_birthdays():
         # Marked before sending, so a restart or a second process never posts again this month.
         # A send that fails is not retried.
         try:
-            if not await mark_monthly_post_redis(guild.id, today.strftime("%Y-%m")):
+            if not await mark_monthly_post_redis(guild.id, core.month_key(today)):
                 continue
         except StoreUnavailable as e:
             log.error("Storage unavailable in the monthly post; skipped guild %s (%s)", guild.id, e)
             continue
 
         # Soonest first. A public post: the month and day, never the birth year or age.
-        lines = [f"<@{user_id}> - {upcoming_bd.strftime('%A, %B %d')}" for upcoming_bd, user_id in sorted(upcoming)]
+        lines = [f"<@{user_id}> - {core.format_occurrence(upcoming_bd)}" for upcoming_bd, user_id in sorted(upcoming)]
         try:
-            for chunk in chunk_messages("🎉 **Upcoming Birthdays:**", lines):
+            for chunk in core.chunk_messages("🎉 **Upcoming Birthdays:**", lines):
                 await channel.send(chunk)
         except Exception as e:  # noqa: BLE001 - a failed send must not stop the other guilds' posts; #37 narrows this
             print(f"❌ Error sending upcoming birthdays message in {guild.name}: {e}")
@@ -389,20 +331,19 @@ async def birthday_set(
 ):
     await interaction.response.defer(ephemeral=True)  # Prevent Discord timeout
     try:
-        # Without a year, LEAP_YEAR stands in, so Feb 29 is a date.
-        birthday_date = datetime.date(LEAP_YEAR if year is None else year, month, day)
+        # Without a year, core.LEAP_YEAR stands in, so Feb 29 is a date.
+        birthday_date = core.birthday_as_date(month, day, year)
     except ValueError:
         await interaction.followup.send(NO_SUCH_DATE, ephemeral=True)
         return
-    if year is None:
-        birthday = birthday_date.strftime("--%m-%d")  # ISO 8601's date without a year
-    else:
+    if year is not None:
         # A date no one could be born on is refused, not stored.
-        error = birth_date_error(birthday_date, datetime.date.today())  # noqa: DTZ011 - the host's date
+        error = core.birth_date_error(birthday_date, datetime.date.today())  # noqa: DTZ011 - the host's date
         if error:
             await interaction.followup.send(error, ephemeral=True)
             return
-        birthday = birthday_date.isoformat()
+    # "YYYY-MM-DD", or ISO 8601's date without a year, "--MM-DD"
+    birthday = core.stored_birthday(birthday_date, with_year=year is not None)
     try:
         # Stored and shared with this server
         await set_birthday_redis(interaction.guild_id, interaction.user.id, birthday, show_age)
@@ -415,7 +356,7 @@ async def birthday_set(
     else:
         shown = "Others see only the month and day."
     await interaction.followup.send(
-        f"✅ Your birthday has been set to {format_birthday(month, day, year)}. {shown}", ephemeral=True
+        f"✅ Your birthday has been set to {core.format_birthday(month, day, year)}. {shown}", ephemeral=True
     )
 
 
@@ -434,17 +375,17 @@ async def birthday_show(interaction: discord.Interaction, member: discord.Member
     if birthday_str:
         try:
             # Parse the stored birthday. The year and age show only if the member opted in.
-            month, day, year = parse_birthday(birthday_str)
+            month, day, year = core.parse_birthday(birthday_str)
             shown_year = year if show_age else None
             # Compute the next birthday, today or later
             today = datetime.date.today()  # noqa: DTZ011 - the host's date
-            next_birthday = next_occurrence(month, day, today)
-            age = "" if shown_year is None else f", turning {next_birthday.year - shown_year}"
+            next_birthday = core.next_occurrence(month, day, today)
+            age = "" if shown_year is None else f", turning {core.age_on(shown_year, next_birthday)}"
 
             await interaction.followup.send(
                 f"🎂 **{member.mention}'s Birthday:**\n"
-                f"{format_birthday(month, day, shown_year)} - "
-                f"next birthday {next_birthday.strftime('%A, %B %d %Y')}{age}",
+                f"{core.format_birthday(month, day, shown_year)} - "
+                f"next birthday {core.format_occurrence(next_birthday, with_year=True)}{age}",
                 ephemeral=True,
             )
         except Exception as e:  # noqa: BLE001 - the member gets an error reply, not silence; #37 narrows this
@@ -471,19 +412,19 @@ async def birthday_list(interaction: discord.Interaction):
     for user_id, birthday_str, show_age in birthdays:
         try:
             # Parse the stored birthday. The year shows only if the member opted in.
-            month, day, year = parse_birthday(birthday_str)
+            month, day, year = core.parse_birthday(birthday_str)
             # Compute the next birthday, today or later
-            next_birthday = next_occurrence(month, day, today)
+            next_birthday = core.next_occurrence(month, day, today)
 
             lines.append(
-                f"<@{user_id}> - {format_birthday(month, day, year if show_age else None)} - "
-                f"next birthday {next_birthday.strftime('%A, %B %d %Y')}"
+                f"<@{user_id}> - {core.format_birthday(month, day, year if show_age else None)} - "
+                f"next birthday {core.format_occurrence(next_birthday, with_year=True)}"
             )
         except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the list; #37 narrows this
             print(f"❌ Error processing birthday for user {user_id}: {e}")
 
     if lines:
-        for chunk in chunk_messages("🎉 **Server Birthdays:**", lines):
+        for chunk in core.chunk_messages("🎉 **Server Birthdays:**", lines):
             await interaction.followup.send(chunk, ephemeral=True)
     else:
         await interaction.followup.send("❌ No birthdays have been set yet.", ephemeral=True)
@@ -511,12 +452,12 @@ async def birthday_upcoming(
 
     for user_id, birthday_str, show_age in birthdays:
         try:
-            month, day, year = parse_birthday(birthday_str)
-            upcoming_bd = next_occurrence(month, day, today)
-            # next_occurrence() is today or later, so this keeps 0 to `days` days away.
-            if (upcoming_bd - today).days <= days:
+            month, day, year = core.parse_birthday(birthday_str)
+            # The next birthday, if it is 0 to `days` days away
+            upcoming_bd = core.upcoming_occurrence(month, day, today, days)
+            if upcoming_bd is not None:
                 # The age on the next birthday, only if the member opted in and gave a year
-                age = upcoming_bd.year - year if show_age and year is not None else None
+                age = core.age_on(year, upcoming_bd) if show_age and year is not None else None
                 upcoming_birthdays.append((user_id, upcoming_bd, age))
         except Exception as e:  # noqa: BLE001 - one bad stored date must not stop the list; #37 narrows this
             print(f"❌ Error processing birthday for user {user_id}: {e}")
@@ -524,10 +465,10 @@ async def birthday_upcoming(
     if upcoming_birthdays:
         # One line per member. <@id> shows the member's name without the member cache.
         lines = [
-            f"<@{user_id}> - {upcoming_bd.strftime('%A, %B %d')}" + ("" if age is None else f" - turning {age}")
+            f"<@{user_id}> - {core.format_occurrence(upcoming_bd)}" + ("" if age is None else f" - turning {age}")
             for user_id, upcoming_bd, age in upcoming_birthdays
         ]
-        for chunk in chunk_messages("🎉 **Upcoming Birthdays:**", lines):
+        for chunk in core.chunk_messages("🎉 **Upcoming Birthdays:**", lines):
             await interaction.followup.send(chunk, ephemeral=True)
     else:
         await interaction.followup.send(
