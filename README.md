@@ -11,8 +11,11 @@ The commands work in servers only, never in DMs, and only the member who runs on
 - `/birthday list`: the birthdays shared with this server, with the year for members who gave it and turned on `show_age`.
 - `/birthday upcoming [days]`: the birthdays from today to 30 days ahead, or to `days` days ahead (1 to 366), with the age they turn for members who gave the year and turned on `show_age`.
 - `/birthday forget`: delete your birthday from every server.
+- `/birthday config [channel] [time] [timezone] [off]`, for members with the Manage Server permission: turn on the server's daily birthday greetings, or change them, with all three of `channel`, `time` (24-hour `HH:MM`, such as `09:00`) and `timezone` (a name from the tz database, such as `Europe/Berlin` or `America/New_York`). `off: True` turns them off. Discord cannot hide a subcommand from members without a permission, so every member sees this one, and the bot refuses it to members without Manage Server.
 
 On the 1st of each month at 15:00 UTC, the bot posts the birthdays of that month and the next two in each server's #general, with the month and day only.
+
+The daily greetings are off until someone with Manage Server runs `/birthday config` in the server. Then, every day at the server's time in its time zone, the bot posts "🎂 Happy birthday, @member!" in the server's channel for each member who shared their birthday with the server and has it that day, and pings those members and nobody else. The greeting shows no year or age. A Feb 29 birthday is greeted on Feb 28 in years without Feb 29. The bot checks every 5 minutes, so a greeting goes out up to 5 minutes after its time, and a bot that was down then greets later that day. A server gets one greeting a day, however often the bot restarts. When the bot leaves a server, it deletes the server's greeting settings.
 
 ### Developing
 
@@ -54,7 +57,7 @@ https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot%20applicati
 ```
 
 - Scopes: `bot` and `applications.commands` (the slash commands).
-- Permissions: View Channels and Send Messages (`3072`), for the monthly list in #general. The answers to slash commands need no channel permission.
+- Permissions: View Channels and Send Messages (`3072`), for the monthly list in #general and the daily greetings in the channel a server picks. The answers to slash commands need no channel permission.
 - Never grant Administrator or Mention Everyone; the bot needs neither.
 - On the Developer Portal's Bot page, leave the Message Content and Server Members privileged intents off. `bot.py` uses `discord.Intents.default()`, which requests neither.
 
