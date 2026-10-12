@@ -7,7 +7,7 @@
 # `docker compose -f compose.dev.yaml down` stops Redis; add -v to delete its data.
 services:
   redis:
-    # redis:7.4-alpine, pinned to its digest
+    # The official Redis image, pinned to its digest. Dependabot bumps the tag and the digest together.
     image: redis:8.10-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
