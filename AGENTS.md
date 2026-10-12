@@ -2,7 +2,8 @@
 
 ## Commands
 
-- Set up with Python 3.11, as CI does (spaCy 3.5.0 has wheels only up to 3.11): `python3.11 -m venv .venv && . .venv/bin/activate && pip install --only-binary :all: -r requirements.txt -r requirements-dev.txt && pre-commit install`
+- Set up with uv, as CI does: `uv sync --locked --no-build && . .venv/bin/activate && pre-commit install`. uv creates `.venv` with Python 3.11 (`.python-version`; spaCy 3.5.0 has wheels only up to 3.11) and installs the packages `uv.lock` pins, dev tools included, from wheels only.
+- After a dependency change in `pyproject.toml`, run `uv lock` and commit `uv.lock` with it. The Docker build runs `uv sync --locked`, which fails on a stale `uv.lock`.
 - Lint: `ruff check --select E9,F63,F7,F82 .`
 - Test: `pytest -q`. Before each commit, pre-commit runs the lint and `tests/test_registry.py`.
 - Run against a test server: `docker compose -f compose.dev.yaml up -d`, then `python bot.py`. The bot reads `DISCORD_TOKEN` (the development application's token), `REDIS_URL=redis://127.0.0.1:6379/0` and `DEV_GUILD_ID` (the test server's ID) from the owner's `.env`.

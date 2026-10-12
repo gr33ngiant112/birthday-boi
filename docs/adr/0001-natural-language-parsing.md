@@ -8,7 +8,7 @@
 A member can set a birthday in two ways. One is `/set_birthday`, a slash command with a date option. The other is mentioning the bot in a server ("@Birthday Boi my birthday is ..."). For the mention, `on_message` in `bot.py` looks for a date with spaCy and then tries a fixed list of `strptime` formats. Since [#8](https://github.com/gr33ngiant112/birthday-boi/issues/8), a chat lookup only points to `/get_birthday` and shows no dates.
 
 - The chat parser failed on about half of the everyday phrasings in the audit's test sets (#16, #30). It also accepted the year 2999, which the birth-year range check now refuses. In the audit's run, `dateutil.parser.parse(fuzzy=True)` scored 18/18 (#30).
-- spaCy serves only this parser, but it constrains the whole build. spaCy 3.5 has no wheel for Python 3.12, so the bot stays on Python 3.11, and `requirements.txt` has to pin `thinc`, `numpy` and `setuptools` around it. With spaCy the resolved dependencies come to about 44 packages; without it, about 14.
+- spaCy serves only this parser, but it constrains the whole build. spaCy 3.5 has no wheel for Python 3.12, so the bot stays on Python 3.11, and `pyproject.toml` has to pin `thinc`, `numpy` and `setuptools` around it. With spaCy the resolved dependencies come to about 44 packages; without it, about 14.
 - In the audit's measurement, loading the spaCy model added about 0.9 s to startup and raised peak memory from 46 MB to 160 MB.
 
 ## Options

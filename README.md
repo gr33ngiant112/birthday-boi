@@ -13,7 +13,7 @@ echo 'eval "$(pyenv init --path)"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-2. Install python 3.12.6 and set it globally. Make sure you have glibc and dependent tooling available to build a Python distribution. If you have trouble building Python, You can find solutions to common issues with installing these tools [here](https://github.com/pyenv/pyenv/wiki/Common-build-problems)
+2. Install python 3.11 and set it globally. Make sure you have glibc and dependent tooling available to build a Python distribution. If you have trouble building Python, You can find solutions to common issues with installing these tools [here](https://github.com/pyenv/pyenv/wiki/Common-build-problems)
 
 ```bash
 # If you're on ubuntu, you'll need these packages
@@ -40,20 +40,19 @@ sudo apt-get install \
     libgmp-dev
 
 # Install python3 and set it globally
-pyenv install 3.12.6
-pyenv global 3.12.6
+pyenv install 3.11
+pyenv global 3.11
 exec zsh # or bash
 ```
 
-3. Create the virtual environment
+3. Install [uv](https://docs.astral.sh/uv/getting-started/installation/). Then create the virtual environment `.venv` with the packages that `uv.lock` pins, the dev tools included, and activate it:
 
 ```bash
-sudo apt install python3-venv 
-python3 -m venv .
-source venv/bin/activate   
+uv sync --locked
+source .venv/bin/activate
 ```
 
-4. Run `pip install -r requirements.txt -r requirements-dev.txt`, then `pre-commit install`. Before each commit, the hook runs ruff's syntax checks and the command registry test with this venv's ruff and pytest, so commit with the venv active.
+4. Run `pre-commit install`. Before each commit, the hook runs ruff's syntax checks and the command registry test with this venv's ruff and pytest, so commit with the venv active.
 
 ### Building and testing the Docker image
 

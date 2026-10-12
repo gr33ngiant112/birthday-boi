@@ -1,10 +1,10 @@
 # Runs two of CI's checks before each commit: ruff's syntax-error and undefined-name rules, and
-# the command registry test (#27). Set up with `pre-commit install` in the virtualenv that has
-# requirements.txt and requirements-dev.txt installed.
+# the command registry test (#27). Set up with `pre-commit install` in the virtualenv that
+# `uv sync` creates (.venv), which has the bot's packages and the dev tools.
 #
 # language: unsupported (pre-commit's name for `system` since 4.4.0) runs each hook from the
-# active environment, so the hooks use the ruff and pytest that requirements-dev.txt pins and the
-# bot's own dependencies, which the registry test imports.
+# active environment, so the hooks use the ruff and pytest that uv.lock pins and the bot's own
+# dependencies, which the registry test imports.
 minimum_pre_commit_version: "4.4.0"
 repos:
   - repo: local
