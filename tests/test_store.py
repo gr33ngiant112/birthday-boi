@@ -39,7 +39,7 @@ def run_view(view, gateway, guild, asker):
 def test_view_lists_members_the_bot_has_not_cached(view, fake_redis, freeze_today, gateway):
     freeze_today(datetime.date(2026, 10, 1))  # the 1st, so the monthly task posts
     guild = gateway.add_guild(GUILD_ID, "Guild", [ASKER], uncached=UNCACHED)
-    for (user_id, _), birthday in zip(UNCACHED, UNCACHED_BIRTHDAYS):
+    for (user_id, _), birthday in zip(UNCACHED, UNCACHED_BIRTHDAYS, strict=True):
         fake_redis.seed_birthday(GUILD_ID, user_id, birthday)
     if any(guild.get_member(user_id) for user_id, _ in UNCACHED):
         pytest.fail("setup: these members should not be in the member cache")

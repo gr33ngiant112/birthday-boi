@@ -110,8 +110,9 @@ async def get_guild_birthdays_redis(guild_id):
     try:
         user_ids = list(await redis_client.smembers(f"guild:{guild_id}:birthdays"))
         if user_ids:
+            # MGET answers with one value per key, in order.
             dates = await redis_client.mget([f"user:{user_id}:birthday" for user_id in user_ids])
-            birthdays = [(user_id, birthday) for user_id, birthday in zip(user_ids, dates) if birthday]
+            birthdays = [(user_id, birthday) for user_id, birthday in zip(user_ids, dates, strict=True) if birthday]
     except redis.RedisError as e:
         raise StoreUnavailable(type(e).__name__) from e
     return birthdays

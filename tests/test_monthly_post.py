@@ -424,13 +424,13 @@ def test_the_post_lists_birthdays_soonest_first(fake_redis, freeze_today, gatewa
     ]
     members = [(200000000000007100 + i, f"member-{i}") for i in range(len(birthdays))]
     guild = gateway.add_guild(GUILD_A, "Guild A", members)
-    for (user_id, _), (birthday, _) in zip(members, birthdays):
+    for (user_id, _), (birthday, _) in zip(members, birthdays, strict=True):
         fake_redis.seed_birthday(GUILD_A, user_id, birthday)
 
     asyncio.run(bot.check_upcoming_birthdays())
 
     rows = "\n".join(posts(gateway, guild)).splitlines()[1:]  # after the header
-    by_date = sorted(zip(members, birthdays), key=lambda pair: pair[1][1])
+    by_date = sorted(zip(members, birthdays, strict=True), key=lambda pair: pair[1][1])
     expected = [f"<@{user_id}> - {in_post.strftime('%A, %B %d')}" for (user_id, _), (_, in_post) in by_date]
     if sorted(rows) != sorted(expected):
         pytest.fail(f"setup: the post should list every member once, got {rows!r}")
