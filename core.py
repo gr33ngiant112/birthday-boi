@@ -1,14 +1,16 @@
 """Dates and rendering for bot.py (#32). Every date the bot computes comes from here: the next
 birthday, the windows of /birthday upcoming and the monthly post, ages, the birth-year range,
-the stored forms of a birthday and how replies show dates; and the splitting of long replies
-into messages and embeds (#37).
+the stored forms of a birthday and how replies show dates; the times, time zones and local dates
+of the daily greetings (#34); and the splitting of long replies into messages and embeds (#37).
 
 Plain functions of their arguments: this module imports neither discord nor redis and never
-reads the clock. bot.py reads today's date and passes it in.
+reads the clock. bot.py reads today's date, or the time, and passes it in.
 """
 
 import calendar
 import datetime
+import re
+import zoneinfo
 
 # Discord rejects messages longer than this.
 MESSAGE_LIMIT = 2000
@@ -137,3 +139,44 @@ def format_occurrence(occurrence, with_year=False):
 # The month a monthly post's marker in Redis names: "YYYY-MM".
 def month_key(today):
     return today.strftime("%Y-%m")
+
+
+# A time of day as /birthday config takes it: 24-hour "HH:MM", such as "09:00" or "9:00". None for
+# anything else.
+def parse_time_of_day(text):
+    match = re.fullmatch(r"([01]?[0-9]|2[0-3]):([0-5][0-9])", text.strip())
+    return None if match is None else datetime.time(int(match[1]), int(match[2]))
+
+
+# A time of day as the bot stores and shows it: "09:00".
+def format_time_of_day(time_of_day):
+    return time_of_day.strftime("%H:%M")
+
+
+# The time zone with this IANA name, such as "Europe/Berlin", or None if the host's time zone
+# database has none by that name.
+def time_zone(name):
+    try:
+        return zoneinfo.ZoneInfo(name.strip())
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+# The date in `zone` at `now`, an aware datetime, once the clocks there show `greeting_time` or
+# later that day; None before that. The clocks are read as they show: on a day they skip
+# `greeting_time` (springing forward from 02:00 to 03:00 skips 02:30), it comes when they show
+# 03:00; on a day they show it twice (falling back), it comes the first time.
+def greeting_date(now, greeting_time, zone):
+    local = now.astimezone(zone)
+    return local.date() if local.time() >= greeting_time else None
+
+
+# Whether a birthday with this month and day falls on `date`: next_occurrence()'s rule, so a
+# Feb 29 birthday falls on Feb 28 in years without Feb 29.
+def falls_on(month, day, date):
+    return next_occurrence(month, day, date) == date
+
+
+# The date a daily greeting's marker in Redis names: "YYYY-MM-DD".
+def day_key(date):
+    return date.isoformat()

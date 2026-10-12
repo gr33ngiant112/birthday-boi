@@ -69,6 +69,10 @@ MONTHLY_POST_TIME = datetime.time(hour=15, tzinfo=datetime.UTC)
 # A guild's monthly post is marked in Redis for this long: past the end of its month.
 MONTHLY_POST_MARKER_TTL = datetime.timedelta(days=40)
 
+# A guild's daily greeting is marked in Redis for this long: past the end of its date in every
+# time zone, from UTC+14 to UTC-12, even if the guild changes its time zone that day.
+GREETING_MARKER_TTL = datetime.timedelta(days=3)
+
 # The bot's log, by a name of its own: run as `python bot.py`, __name__ would be "__main__". A log
 # line names members and servers by ID and errors by type, never with a birth date or a name.
 log = logging.getLogger("birthday_boi")
@@ -188,6 +192,45 @@ async def mark_monthly_post_redis(guild_id, month):
         raise StoreUnavailable(type(e).__name__) from e
 
 
+# Turn on a guild's daily greetings, or change them: the hash guild:<id>:greetings holds the
+# channel's ID, the time of day ("HH:MM") and the IANA time zone. Raises StoreUnavailable.
+async def set_greeting_settings_redis(guild_id, channel_id, time_of_day, zone_name):
+    try:
+        await redis_client.hset(
+            f"guild:{guild_id}:greetings", mapping={"channel": channel_id, "time": time_of_day, "timezone": zone_name}
+        )
+    except redis.RedisError as e:
+        raise StoreUnavailable(type(e).__name__) from e
+
+
+# A guild's daily greeting settings, {"channel": ..., "time": ..., "timezone": ...}, or None while
+# its greetings are off. Raises StoreUnavailable.
+async def get_greeting_settings_redis(guild_id):
+    try:
+        return await redis_client.hgetall(f"guild:{guild_id}:greetings") or None
+    except redis.RedisError as e:
+        raise StoreUnavailable(type(e).__name__) from e
+
+
+# Turn off a guild's daily greetings: delete its settings. Raises StoreUnavailable.
+async def delete_greeting_settings_redis(guild_id):
+    try:
+        await redis_client.delete(f"guild:{guild_id}:greetings")
+    except redis.RedisError as e:
+        raise StoreUnavailable(type(e).__name__) from e
+
+
+# Mark a guild's daily greeting for a date, the guild's local date, as sent. Returns False if it
+# was marked already, by an earlier run, before a restart or by another bot process. Raises
+# StoreUnavailable.
+async def mark_greeting_redis(guild_id, date):
+    try:
+        key = f"greeted:{guild_id}:{core.day_key(date)}"
+        return bool(await redis_client.set(key, 1, nx=True, ex=GREETING_MARKER_TTL))
+    except redis.RedisError as e:
+        raise StoreUnavailable(type(e).__name__) from e
+
+
 # Background task: every day at MONTHLY_POST_TIME, and on the 1st it posts the upcoming birthdays
 @tasks.loop(time=MONTHLY_POST_TIME)
 async def check_upcoming_birthdays():
@@ -264,6 +307,85 @@ async def before_check_upcoming_birthdays():
             log.error("The monthly post at startup failed (%s)", type(e).__name__)
 
 
+# Background task: the daily greetings (#34), in the servers that turned them on with
+# /birthday config. Each server's greeting goes out at the first run at or after its time of day
+# in its time zone, so up to 5 minutes late, or later that day after a restart.
+@tasks.loop(minutes=5)
+async def send_birthday_greetings():
+    now = datetime.datetime.now(datetime.UTC)
+    for guild in client.guilds:
+        await greet_birthdays(guild, now)
+
+
+# Before READY the bot has no guilds, so a run would greet nowhere. The first run is at READY.
+@send_birthday_greetings.before_loop
+async def before_send_birthday_greetings():
+    await client.wait_until_ready()
+
+
+# Post a guild's greeting for its local date at `now`, once that date's greeting time has come, if
+# the guild turned greetings on and members who shared their birthday with it have it that day.
+# Errors are logged and skip only this guild: an exception would end the task.
+async def greet_birthdays(guild, now):
+    try:
+        settings = await get_greeting_settings_redis(guild.id)
+    except StoreUnavailable as e:
+        log.error("Storage unavailable in the daily greetings; skipped guild %s (%s)", guild.id, e)
+        return
+    if settings is None:  # greetings are off here
+        return
+    channel_id = settings.get("channel", "")
+    greeting_time = core.parse_time_of_day(settings.get("time", ""))
+    zone = core.time_zone(settings.get("timezone", ""))
+    if not channel_id.isdigit() or greeting_time is None or zone is None:
+        # Such as a time zone that an update of the host's time zone database removed.
+        log.error("Unusable greeting settings in guild %s; it gets no greeting until /birthday config", guild.id)
+        return
+    date = core.greeting_date(now, greeting_time, zone)
+    if date is None:  # its greeting time has not come yet today
+        return
+
+    try:
+        birthdays = await get_guild_birthdays_redis(guild.id)
+    except StoreUnavailable as e:
+        log.error("Storage unavailable in the daily greetings; skipped guild %s (%s)", guild.id, e)
+        return
+    # The greeting never shows a year or age, so it ignores the show_age opt-in.
+    user_ids = []
+    for user_id, birthday, _ in birthdays:
+        try:
+            month, day, _ = core.parse_birthday(birthday)
+        except ValueError:
+            log.error("Skipped user %s in the daily greeting of guild %s: unreadable birthday", user_id, guild.id)
+            continue
+        if core.falls_on(month, day, date):
+            user_ids.append(int(user_id))
+    if not user_ids:
+        return
+
+    # Marked before sending, as the monthly post is: a restart or a second process never greets
+    # the date again, and a send that fails is not retried.
+    try:
+        if not await mark_greeting_redis(guild.id, date):
+            return
+    except StoreUnavailable as e:
+        log.error("Storage unavailable in the daily greetings; skipped guild %s (%s)", guild.id, e)
+        return
+    channel = guild.get_channel(int(channel_id))
+    if channel is None:
+        log.error("The greeting channel of guild %s is gone; no greeting today", guild.id)
+        return
+    # One line per member. Each message pings the members it names and nobody else: the client's
+    # AllowedMentions.none() stays in force for everything else.
+    lines = [f"🎂 Happy birthday, <@{user_id}>!" for user_id in sorted(user_ids)]
+    try:
+        for chunk in core.chunk_messages(lines[0], lines[1:]):
+            named = [discord.Object(id=user_id) for user_id in sorted(user_ids) if f"<@{user_id}>" in chunk]
+            await channel.send(chunk, allowed_mentions=discord.AllowedMentions(users=named))
+    except discord.HTTPException as e:
+        log.error("The daily greeting in guild %s failed to send (%s)", guild.id, type(e).__name__)
+
+
 # Subclassing Client to use app commands (slash commands)
 class MyClient(discord.Client):
     def __init__(self):
@@ -282,9 +404,10 @@ class MyClient(discord.Client):
         if SYNC_COMMANDS:
             await self.tree.sync()
             log.info("Slash commands synced globally")
-        # Start the upcoming birthdays task after commands are synced.
+        # Start the task loops after commands are synced.
         check_upcoming_birthdays.start()
         heartbeat.start()
+        send_birthday_greetings.start()
 
 
 # Instantiate the client
@@ -298,9 +421,10 @@ async def on_ready():
 
 
 # Called when the bot is removed from a guild: kicked, banned or left, or the guild was
-# deleted. Nobody there can see the guild's birthdays any more.
+# deleted. Nobody there can see the guild's birthdays any more, and it gets no more greetings.
 @client.event
 async def on_guild_remove(guild):
+    await delete_greeting_settings_redis(guild.id)
     # Removing every member empties the guild's set, and Redis deletes an empty set.
     for user_id in await redis_client.smembers(f"guild:{guild.id}:birthdays"):
         await remove_birthday_from_guild_redis(guild.id, user_id)
@@ -308,7 +432,7 @@ async def on_guild_remove(guild):
 
 # The /birthday commands. They replaced /set_birthday, /get_birthday, /list_birthdays,
 # /forecast_birthdays and /forget_birthday. A group's subcommands cannot have settings of their
-# own, so the group's apply to all five: Discord offers them in servers only (contexts, and
+# own, so the group's apply to all six: Discord offers them in servers only (contexts, and
 # dm_permission for older clients), never in DMs. Every reply is ephemeral: only the member
 # who runs a command sees it.
 birthday_group = app_commands.Group(
@@ -531,7 +655,80 @@ async def birthday_forget(interaction: discord.Interaction):
         )
 
 
-# The group and its five subcommands are the bot's only slash commands.
+# What /birthday config answers.
+CONFIG_NOT_ALLOWED = "❌ Only members with the Manage Server permission can change the birthday greetings."
+CONFIG_INCOMPLETE = (
+    "❌ To turn on the daily birthday greetings, give the channel, the time and the time zone. "
+    "To turn them off, set off to True."
+)
+CONFIG_BAD_TIME = "❌ The time must be 24-hour HH:MM, such as 09:00 or 18:30."
+CONFIG_BAD_ZONE = "❌ Unknown time zone. Use a name from the tz database, such as Europe/Berlin or America/New_York."
+CONFIG_OFF = "✅ The daily birthday greetings are off in this server."
+CONFIG_FAILED = "⚠️ Storage is unavailable, so the greeting settings were not changed. Please try again later."
+
+
+# Turn the daily greetings on, change them or turn them off. Discord takes default member
+# permissions only for a whole top-level command, and discord.py ignores default_permissions on a
+# subcommand, so every member sees this one and the handler refuses those without Manage Server.
+# Discord sends the member's permissions in the channel with each interaction; an owner or an
+# administrator has them all.
+@birthday_group.command(
+    name="config", description="Turn this server's daily birthday greetings on or off (Manage Server only)"
+)
+@app_commands.describe(
+    channel="The channel for the greetings",
+    time_of_day="The time to post them each day, 24-hour HH:MM, such as 09:00",
+    zone_name="The time zone of that time, such as Europe/Berlin or America/New_York",
+    off="Turn the greetings off",
+)
+@app_commands.rename(time_of_day="time", zone_name="timezone")
+async def birthday_config(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel | None = None,
+    time_of_day: str | None = None,
+    zone_name: str | None = None,
+    off: bool = False,
+):
+    await interaction.response.defer(ephemeral=True)  # Answer before reading Redis
+    if not interaction.permissions.manage_guild:
+        await interaction.followup.send(CONFIG_NOT_ALLOWED, ephemeral=True)
+        return
+    if off:
+        try:
+            await delete_greeting_settings_redis(interaction.guild_id)
+        except StoreUnavailable as e:
+            log.error("Storage unavailable in /birthday config (%s)", e)
+            await interaction.followup.send(CONFIG_FAILED, ephemeral=True)
+            return
+        await interaction.followup.send(CONFIG_OFF, ephemeral=True)
+        return
+    if channel is None or time_of_day is None or zone_name is None:
+        await interaction.followup.send(CONFIG_INCOMPLETE, ephemeral=True)
+        return
+    greeting_time = core.parse_time_of_day(time_of_day)
+    if greeting_time is None:
+        await interaction.followup.send(CONFIG_BAD_TIME, ephemeral=True)
+        return
+    zone = core.time_zone(zone_name)
+    if zone is None:
+        await interaction.followup.send(CONFIG_BAD_ZONE, ephemeral=True)
+        return
+    shown_time = core.format_time_of_day(greeting_time)
+    try:
+        await set_greeting_settings_redis(interaction.guild_id, channel.id, shown_time, zone.key)
+    except StoreUnavailable as e:
+        log.error("Storage unavailable in /birthday config (%s)", e)
+        await interaction.followup.send(CONFIG_FAILED, ephemeral=True)
+        return
+    await interaction.followup.send(
+        f"✅ Every day at {shown_time} ({zone.key}), the bot wishes a happy birthday in {channel.mention} to the "
+        "members who shared their birthday with this server and have it that day. It pings them, and shows no "
+        "year or age.",
+        ephemeral=True,
+    )
+
+
+# The group and its six subcommands are the bot's only slash commands.
 client.tree.add_command(birthday_group)
 
 # What a member is told when a command fails with an error it does not handle.

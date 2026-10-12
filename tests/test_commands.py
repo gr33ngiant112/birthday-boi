@@ -42,8 +42,9 @@ def test_the_birthday_group_is_guild_only():
     # flat commands the group replaced.
     payload = bot.birthday_group.to_dict(bot.client.tree)
 
-    if sorted(option["name"] for option in payload["options"]) != ["forget", "list", "set", "show", "upcoming"]:
-        pytest.fail(f"setup: expected the five subcommands, got {payload['options']!r}")
+    names = sorted(option["name"] for option in payload["options"])
+    if names != ["config", "forget", "list", "set", "show", "upcoming"]:
+        pytest.fail(f"setup: expected the six subcommands, got {payload['options']!r}")
     assert payload["contexts"] == [app_commands.AppCommandContext.GUILD]
     assert payload["dm_permission"] is False
 

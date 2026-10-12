@@ -40,7 +40,11 @@ def setup_hook(monkeypatch):
 
     # mock.patch, not monkeypatch: on the way out it deletes the loops' own start attribute, so
     # Loop.start is the class's again (monkeypatch would leave a copy on the loop behind).
-    with mock.patch.object(bot.check_upcoming_birthdays, "start") as start, mock.patch.object(bot.heartbeat, "start"):
+    with (
+        mock.patch.object(bot.check_upcoming_birthdays, "start") as start,
+        mock.patch.object(bot.heartbeat, "start"),
+        mock.patch.object(bot.send_birthday_greetings, "start"),
+    ):
         yield run, sync, start
     # The copies copy_global_to() made for the development server.
     bot.client.tree.clear_commands(guild=discord.Object(id=DEV_GUILD_ID))

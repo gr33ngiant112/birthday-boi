@@ -15,6 +15,8 @@ You have one stored birthday. Setting it again, in any server, changes the date 
 
 The bot stores nothing else about you: not your name, and not your messages. Nothing expires; the data stays until it is deleted as described below.
 
+For a server where someone with the Manage Server permission turned on the daily greetings with `/birthday config`, the bot also stores the channel, the time of day and the time zone they chose. These settings are about the server, not about you. Turning the greetings off with `/birthday config off: True` deletes them.
+
 ## Who sees what
 
 In Discord, only members of a server where you set your birthday can see it, and only in that server:
@@ -22,6 +24,7 @@ In Discord, only members of a server where you set your birthday can see it, and
 - `/birthday show` and `/birthday list` show the month and day of your birthday to the member who runs them. If you gave the year and turned on `show_age`, `/birthday show` also shows your birth year and the age you will turn, and `/birthday list` your birth year. Only that member sees the answer.
 - `/birthday upcoming` shows the month and day if your birthday is today or within the days the member asks for (30 unless they choose 1 to 366), and the age you will turn only if you gave the year and turned on `show_age`. Only the member who runs it sees the answer.
 - On the first day of each month, at 15:00 UTC, the bot posts the birthdays in that month and the next two in the server's #general channel. The post shows the month and day, never the year or age, and everyone who can read #general sees it. So that a server gets one post a month, the bot records the server's ID and the month of its post, and deletes that record after 40 days.
+- If the server turned on the daily greetings, then on your birthday, at the server's chosen time in its chosen time zone, the bot posts "🎂 Happy birthday" with a mention of you in the server's chosen channel, and the mention pings you. Everyone who can read that channel sees it, and so learns the day of your birthday, but the greeting never shows your birth year or age. A Feb 29 birthday is greeted on Feb 28 in years without Feb 29. So that a server gets one greeting a day, the bot records the server's ID and the date of its greeting, and deletes that record after 3 days.
 - `/birthday set` answers only you.
 
 Before `/birthday set`, the year was required, so a birthday set then has one. Others see that year, and your age, only if you set your birthday again with `show_age` on.
@@ -38,11 +41,11 @@ If you no longer share a server with the bot, you cannot run `/birthday forget`.
 
 ## When you leave a server
 
-Leaving a server deletes nothing. You stay on that server's list, and `/birthday list`, `/birthday upcoming` and the monthly post there still show your birthday, until you run `/birthday forget`.
+Leaving a server deletes nothing. You stay on that server's list, and `/birthday list`, `/birthday upcoming`, the monthly post and the daily greetings there still show your birthday, until you run `/birthday forget`.
 
 ## When the bot leaves a server
 
-When the bot is removed from a server, or the server is deleted, the bot deletes that server's list. If that was the only server where you set your birthday, it also deletes your birthday, your `show_age` choice and your list of servers, because no server can see them any more. Other servers where you set it still see it.
+When the bot is removed from a server, or the server is deleted, the bot deletes that server's list and its greeting settings. If that was the only server where you set your birthday, it also deletes your birthday, your `show_age` choice and your list of servers, because no server can see them any more. Other servers where you set it still see it.
 
 This cleanup runs once, when Discord tells the running bot about the removal, and it is not retried. If the bot is not running at that moment, Discord may never tell it; if the bot cannot reach its database, the cleanup stops. Whatever it did not delete stays until you run `/birthday forget` or whoever runs the bot deletes it.
 
