@@ -168,6 +168,24 @@ def test_nothing_is_sent_when_the_only_member_left_and_the_next_server_still_get
     assert logged_errors(caplog) == []
 
 
+@pytest.mark.parametrize("view", ["monthly post", "greeting"])
+def test_a_task_that_runs_again_the_same_day_asks_discord_once(view, fake_redis, freeze_now, gateway):
+    clock = freeze_now(NOW)
+    guild = gateway.add_guild(GUILD_A, "Guild A", [ADMIN, STAYER])
+    prepare(view, gateway, guild)
+    seed(fake_redis, GUILD_A, STAYER)
+
+    run_view(view, gateway, guild)
+    # The greeting task runs every 5 minutes all day; the monthly post runs again after a restart.
+    clock.set(NOW + datetime.timedelta(minutes=5))
+    run_view(view, gateway, guild)
+
+    # The check comes after the day's or the month's marker, so the second run asks Discord nothing.
+    assert len(gateway.member_requests) == 1
+    assert len(gateway.sent_to(gateway.general(guild))) == 1
+    assert shown(in_general(gateway, guild)) == {STAYER[0]}
+
+
 def test_a_birthday_another_server_has_is_kept_for_that_server(fake_redis, freeze_now, gateway):
     freeze_now(NOW)
     left = gateway.add_guild(GUILD_A, "Guild A", [ADMIN, LEAVER])

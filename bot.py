@@ -229,10 +229,9 @@ async def departed_members(guild, user_ids):
                 except redis.RedisError as e:
                     # Hidden all the same; the next check tries the delete again.
                     log.error("Failed to delete user %s, who left guild %s (%s)", user_id, guild.id, type(e).__name__)
-    # The request timed out (TimeoutError), the bot has no websocket (RuntimeError) or it is
-    # closed (ConnectionClosed); or the lookup failed (HTTPException, or a connection error).
+    # The bot has no websocket (RuntimeError) or it is closed (ConnectionClosed); the lookup failed
+    # (HTTPException, or a connection error); or the request timed out (TimeoutError, an OSError).
     except (
-        TimeoutError,
         RuntimeError,
         discord.ConnectionClosed,
         discord.HTTPException,
