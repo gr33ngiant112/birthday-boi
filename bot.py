@@ -183,6 +183,65 @@ async def remove_birthday_from_guild_redis(guild_id, user_id):
     await redis_client.transaction(remove, guilds_key)
 
 
+# Discord answers a Request Guild Members by user_ids with at most this many members.
+MEMBER_QUERY_LIMIT = 100
+# Discord's JSON error code "Unknown Member", which Get Guild Member's 404 carries for a member
+# who is not in the server. Others, such as 10004 "Unknown Guild", say nothing about the member.
+UNKNOWN_MEMBER = 10007
+
+
+# Which of these stored IDs belong to members who left the guild (#74), as a set of strings.
+# Each one is removed from the guild with remove_birthday_from_guild_redis, which deletes the
+# birthday outright when no other guild has it (owner's decision, 2026-10-20). Without the members
+# intent the bot gets no event when a member leaves, so a view calls this just before it shows the
+# IDs. Request Guild Members by user_ids needs no privileged intent. An ID missing from its answer
+# proves nothing: a READY after a reconnect answers a pending request with no members. So each
+# missing ID is looked up with Get Guild Member, and only Discord's 404 "Unknown Member" counts
+# as having left. Any other error stops the check: the IDs not yet checked count as members, and
+# nothing more is deleted. Raises nothing, so it never ends a task loop.
+async def departed_members(guild, user_ids):
+    departed = set()
+    user_ids = [str(user_id) for user_id in user_ids]
+    if guild is None or not user_ids:
+        return departed
+    try:
+        for start in range(0, len(user_ids), MEMBER_QUERY_LIMIT):
+            batch = user_ids[start : start + MEMBER_QUERY_LIMIT]
+            # discord.py asks for 5 members unless given a limit. cache=False: without the members
+            # intent, a cached member is never removed when they leave.
+            found = await guild.query_members(
+                user_ids=[int(user_id) for user_id in batch], limit=len(batch), cache=False
+            )
+            found_ids = {str(member.id) for member in found}
+            for user_id in batch:
+                if user_id in found_ids:
+                    continue
+                try:
+                    await guild.fetch_member(int(user_id))
+                except discord.NotFound as e:
+                    if e.code != UNKNOWN_MEMBER:
+                        raise
+                else:
+                    continue  # still a member
+                departed.add(user_id)
+                try:
+                    await remove_birthday_from_guild_redis(guild.id, user_id)
+                except redis.RedisError as e:
+                    # Hidden all the same; the next check tries the delete again.
+                    log.error("Failed to delete user %s, who left guild %s (%s)", user_id, guild.id, type(e).__name__)
+    # The bot has no websocket (RuntimeError) or it is closed (ConnectionClosed); the lookup failed
+    # (HTTPException, or a connection error); or the request timed out (TimeoutError, an OSError).
+    except (
+        RuntimeError,
+        discord.ConnectionClosed,
+        discord.HTTPException,
+        aiohttp.ClientError,
+        OSError,
+    ) as e:
+        log.error("Member check stopped in guild %s; unchecked members are shown (%s)", guild.id, type(e).__name__)
+    return departed
+
+
 # Mark a guild's post for a month ("YYYY-MM") as sent. Returns False if it was marked
 # already, by an earlier run or another bot process. Raises StoreUnavailable.
 async def mark_monthly_post_redis(guild_id, month):
@@ -281,6 +340,12 @@ async def check_upcoming_birthdays():
             log.error("Storage unavailable in the monthly post; skipped guild %s (%s)", guild.id, e)
             continue
 
+        # Members who left are not shown, and deleted (#74). Checked after the marker, so once a month.
+        departed = await departed_members(guild, [user_id for _, user_id in upcoming])
+        upcoming = [(upcoming_bd, user_id) for upcoming_bd, user_id in upcoming if user_id not in departed]
+        if not upcoming:  # everyone in range left: no bare header
+            continue
+
         # Soonest first. A public post: the month and day, never the birth year or age.
         lines = [f"<@{user_id}> - {core.format_occurrence(upcoming_bd)}" for upcoming_bd, user_id in sorted(upcoming)]
         try:
@@ -375,6 +440,11 @@ async def greet_birthdays(guild, now):
     channel = guild.get_channel(int(channel_id))
     if channel is None:
         log.error("The greeting channel of guild %s is gone; no greeting today", guild.id)
+        return
+    # Members who left are not greeted, and deleted (#74). Checked after the marker, so once a day.
+    departed = await departed_members(guild, user_ids)
+    user_ids = [user_id for user_id in user_ids if str(user_id) not in departed]
+    if not user_ids:  # everyone with a birthday today left: no greeting
         return
     # One line per member. Each message pings the members it names and nobody else: the client's
     # AllowedMentions.none() stays in force for everything else.
@@ -556,8 +626,8 @@ async def birthday_list(interaction: discord.Interaction):
         await interaction.followup.send(READ_FAILED, ephemeral=True)
         return
 
-    # One line per member. <@id> shows the member's name without the member cache.
-    lines = []
+    # One line per member, as (user_id, line). <@id> shows the member's name without the member cache.
+    rows = []
     today = datetime.date.today()  # noqa: DTZ011 - the host's date
     for user_id, birthday_str, show_age in birthdays:
         try:
@@ -566,9 +636,12 @@ async def birthday_list(interaction: discord.Interaction):
             # Compute the next birthday, today or later
             next_birthday = core.next_occurrence(month, day, today)
 
-            lines.append(
-                f"<@{user_id}> - {core.format_birthday(month, day, year if show_age else None)} - "
-                f"next birthday {core.format_occurrence(next_birthday, with_year=True)}"
+            rows.append(
+                (
+                    user_id,
+                    f"<@{user_id}> - {core.format_birthday(month, day, year if show_age else None)} - "
+                    f"next birthday {core.format_occurrence(next_birthday, with_year=True)}",
+                )
             )
         except ValueError as e:  # a stored date that cannot be read; it must not stop the list
             log.error(
@@ -578,6 +651,9 @@ async def birthday_list(interaction: discord.Interaction):
                 type(e).__name__,
             )
 
+    # Members who left are not shown, and deleted (#74).
+    departed = await departed_members(interaction.guild, [user_id for user_id, _ in rows])
+    lines = [line for user_id, line in rows if user_id not in departed]
     if lines:
         for embed in embeds_of("🎉 Server Birthdays", lines):
             await interaction.followup.send(embed=embed, ephemeral=True)
@@ -622,6 +698,9 @@ async def birthday_upcoming(
                 type(e).__name__,
             )
 
+    # Members who left are not shown, and deleted (#74).
+    departed = await departed_members(interaction.guild, [user_id for user_id, _, _ in upcoming_birthdays])
+    upcoming_birthdays = [row for row in upcoming_birthdays if row[0] not in departed]
     if upcoming_birthdays:
         # One line per member. <@id> shows the member's name without the member cache.
         lines = [
