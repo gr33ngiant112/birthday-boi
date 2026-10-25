@@ -63,7 +63,7 @@ https://discord.com/oauth2/authorize?client_id=<CLIENT_ID>&scope=bot%20applicati
 
 ### Running
 
-`python bot.py` reads its settings from the environment, after adding those in a `.env` file if there is one; a variable already set in the environment wins over `.env`. `cp .env.example .env` gives you one to fill in:
+`python bot.py` reads its settings from the environment, after adding those in the `.env` beside `bot.py` if there is one; it reads no other `.env`, so not one in a folder above. A variable already set in the environment wins over `.env`. `cp .env.example .env` gives you one to fill in:
 
 - `DISCORD_TOKEN`, required: the bot's token, from the application's Bot page.
 - `REDIS_URL`, required: where Redis listens. `redis://127.0.0.1:6379/0` is the local Redis from `compose.dev.yaml`.

@@ -9,11 +9,11 @@ nothing here needs a network, a Redis server or a real Discord token.
 """
 
 import asyncio
-import functools
 import importlib
 import os
 import pathlib
 import runpy
+import shutil
 import subprocess
 import sys
 from unittest import mock
@@ -63,8 +63,8 @@ def stub_redis_ping():
 
 
 def no_dotenv(bot):
-    """A patch that makes bot's load_dotenv() a no-op. main() always calls it, and from bot.py
-    python-dotenv looks for a .env in the repository and in every directory above it."""
+    """A patch that makes bot's load_dotenv() a no-op. main() always calls it, on the .env beside
+    the repository's bot.py: a developer's .env, with their token."""
     return mock.patch.object(bot, "load_dotenv")
 
 
@@ -104,7 +104,7 @@ def test_main_runs_client_with_token_from_env(monkeypatch):
         bot.main()
 
     run.assert_called_once_with(bot.client, FAKE_TOKEN, log_handler=None)
-    load_dotenv.assert_called_once_with()
+    load_dotenv.assert_called_once_with(REPO_ROOT / ".env")
     assert isinstance(bot.redis_client, redis.asyncio.Redis)
     assert bot.redis_client.connection_pool.connection_kwargs["host"] == "localhost"
 
@@ -115,7 +115,7 @@ def test_main_loads_dotenv_before_reading_config(monkeypatch):
     monkeypatch.delenv("REDIS_URL", raising=False)
     bot, _ = import_fresh_bot(monkeypatch)
 
-    def fake_load_dotenv():
+    def fake_load_dotenv(dotenv_path):
         # Stands in for a developer's .env file; no real .env is read.
         monkeypatch.setenv("DISCORD_TOKEN", FAKE_TOKEN)
         monkeypatch.setenv("REDIS_URL", LOCAL_REDIS_URL)
@@ -127,7 +127,7 @@ def test_main_loads_dotenv_before_reading_config(monkeypatch):
     ):
         bot.main()
 
-    load_dotenv.assert_called_once_with()
+    load_dotenv.assert_called_once_with(REPO_ROOT / ".env")
     run.assert_called_once_with(bot.client, FAKE_TOKEN, log_handler=None)
 
 
@@ -146,14 +146,15 @@ def test_main_loads_dotenv_even_where_dyno_is_set(monkeypatch):
     ):
         bot.main()
 
-    load_dotenv.assert_called_once_with()
+    load_dotenv.assert_called_once_with(REPO_ROOT / ".env")
     run.assert_called_once_with(bot.client, FAKE_TOKEN, log_handler=None)
 
 
 def test_main_keeps_the_environment_over_a_dotenv_file(monkeypatch, tmp_path):
     # #35: compose.yaml sets the container's environment (env_file, and REDIS_URL for its own
     # Redis). A variable already set there wins over the same one in a .env file, and one only
-    # the file sets still comes from it. The real load_dotenv() reads tmp_path's .env here.
+    # the file sets still comes from it. The real load_dotenv() reads tmp_path's .env here, in
+    # place of the one beside bot.py.
     dotenv_file = tmp_path / ".env"
     dotenv_file.write_text(
         "DISCORD_TOKEN=token-from-the-file\nREDIS_URL=redis://from-the-file:6379/0\nDEV_GUILD_ID=300000000000019000\n"
@@ -164,17 +165,21 @@ def test_main_keeps_the_environment_over_a_dotenv_file(monkeypatch, tmp_path):
     monkeypatch.setenv("DEV_GUILD_ID", "")
     monkeypatch.delenv("DEV_GUILD_ID")
     bot, _ = import_fresh_bot(monkeypatch)
-    load_this_file = functools.partial(dotenv.main.load_dotenv, dotenv_path=dotenv_file)
+
+    def load_the_temp_file(dotenv_path):
+        # Ignores the path main() gives it, so the .env beside the repository's bot.py is not read.
+        return dotenv.main.load_dotenv(dotenv_file)
 
     with (
         mock.patch.object(discord.Client, "run", autospec=True) as run,
-        mock.patch.object(bot, "load_dotenv", side_effect=load_this_file) as load_dotenv,
+        mock.patch.object(bot, "load_dotenv", side_effect=load_the_temp_file) as load_dotenv,
         stub_redis_ping(),
     ):
         bot.main()
 
-    if load_dotenv.call_count != 1 or os.environ.get("DEV_GUILD_ID") != "300000000000019000":
-        pytest.fail(f"setup: main() should load the file once, got {load_dotenv.call_args_list!r}")
+    load_dotenv.assert_called_once_with(REPO_ROOT / ".env")
+    if os.environ.get("DEV_GUILD_ID") != "300000000000019000":
+        pytest.fail("setup: main() should have loaded tmp_path's .env, which sets DEV_GUILD_ID")
     run.assert_called_once_with(bot.client, FAKE_TOKEN, log_handler=None)
     assert bot.redis_client.connection_pool.connection_kwargs["host"] == "localhost"
     assert bot.DEV_GUILD_ID == 300000000000019000
@@ -302,7 +307,7 @@ def test_a_env_copied_from_the_example_stops_at_the_empty_token(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     bot, _ = import_fresh_bot(monkeypatch)
 
-    def load_a_copy_of_the_example():
+    def load_a_copy_of_the_example(dotenv_path):
         # Stands in for load_dotenv() on that .env, with .env.example's values; no real .env is read.
         monkeypatch.setenv("DISCORD_TOKEN", "")
         monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6379/0")
@@ -316,7 +321,7 @@ def test_a_env_copied_from_the_example_stops_at_the_empty_token(monkeypatch):
     ):
         bot.main()
 
-    load_dotenv.assert_called_once_with()
+    load_dotenv.assert_called_once_with(REPO_ROOT / ".env")
     assert exited.value.code == exit_line_for_missing("DISCORD_TOKEN")
     from_url.assert_not_called()
     assert bot.redis_client is None
@@ -423,3 +428,91 @@ def test_import_loads_no_spacy(tmp_path):
     if result.returncode != 0 or len(result.stdout.splitlines()) < 2:
         pytest.fail(f"setup: importing bot should succeed and print the modules, got {result!r}")
     assert result.stdout.splitlines()[-1] == "[]"
+
+
+# The token in the tests' .env files below. It is fake, and no test prints it.
+DOTENV_TOKEN = "not-a-real-token-from-a-dotenv-file"
+
+# `python bot.py` in a fresh interpreter, for a copy of bot.py: sys.argv[1] is the copy and
+# sys.argv[2] the fake token its test wrote in a .env file. The startup PING is stubbed, and
+# client.run() only says whether it got that token; it never prints the token it gets.
+RUN_A_COPY_OF_BOT_PY = """
+import os
+import runpy
+import sys
+from unittest import mock
+
+import discord
+import redis.asyncio
+
+bot_py, fake_token = sys.argv[1], sys.argv[2]
+
+
+def report_the_token(client, token, **kwargs):
+    print("client.run() got the fake token" if token == fake_token else "client.run() got another token")
+
+
+discord.Client.run = report_the_token
+redis.asyncio.Redis.ping = mock.AsyncMock(return_value=True)
+# As `python bot.py` does, put bot.py's folder first on sys.path, for the core.py beside it.
+sys.path.insert(0, os.path.dirname(bot_py))
+sys.argv = [bot_py]
+runpy.run_path(bot_py, run_name="__main__")
+"""
+
+
+def copy_bot_py_to(folder):
+    """Copy bot.py and the core.py it imports into folder, and return the copy of bot.py.
+
+    The tests run the copy, never the repository's bot.py, which would read a developer's .env.
+    """
+    folder.mkdir(parents=True)
+    for name in ("bot.py", "core.py"):
+        shutil.copyfile(REPO_ROOT / name, folder / name)
+    return folder / "bot.py"
+
+
+def run_a_copy_of_bot_py(bot_py, cwd):
+    """Run the copy bot_py from the folder cwd, with none of the bot's settings in the environment."""
+    # PYTHON_DOTENV_DISABLED=1 turns load_dotenv() off, so main() would read no .env at all.
+    unset = ("DISCORD_TOKEN", "REDIS_URL", "DEV_GUILD_ID", "PYTHON_DOTENV_DISABLED")
+    env = {k: v for k, v in os.environ.items() if k not in unset}
+    return subprocess.run(
+        [sys.executable, "-c", RUN_A_COPY_OF_BOT_PY, str(bot_py), DOTENV_TOKEN],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+
+def test_main_reads_no_env_file_in_a_folder_above_bot_py(tmp_path):
+    # #75: main() called load_dotenv() with no path, and python-dotenv then looks for a .env in
+    # bot.py's folder and every folder above it. `python bot.py` in a worktree inside a clone
+    # logged in with the token in the clone's .env. That .env sets both required settings, so
+    # only reading it gets the bot as far as client.run().
+    clone = tmp_path / "clone"
+    bot_py = copy_bot_py_to(clone / ".worktrees" / "fix")
+    (clone / ".env").write_text(f"DISCORD_TOKEN={DOTENV_TOKEN}\nREDIS_URL={LOCAL_REDIS_URL}\n")
+
+    # From the worktree's folder, where a developer runs it.
+    result = run_a_copy_of_bot_py(bot_py, cwd=bot_py.parent)
+
+    assert "client.run()" not in result.stdout, "main() read the .env in a folder above bot.py"
+    assert (result.returncode, result.stderr.splitlines()[-1:]) == (
+        1,
+        [exit_line_for_missing("DISCORD_TOKEN and REDIS_URL")],
+    ), result.stderr
+
+
+def test_main_reads_the_env_file_beside_bot_py_from_any_folder(tmp_path):
+    # The .env beside bot.py is still read, wherever `python bot.py` is run from.
+    bot_py = copy_bot_py_to(tmp_path / "app")
+    (bot_py.parent / ".env").write_text(f"DISCORD_TOKEN={DOTENV_TOKEN}\nREDIS_URL={LOCAL_REDIS_URL}\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    result = run_a_copy_of_bot_py(bot_py, cwd=elsewhere)
+
+    assert (result.returncode, result.stdout) == (0, "client.run() got the fake token\n"), result.stderr
