@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The bot reads only the `.env` file beside `bot.py`. It used to search the folders above as well,
+  so a copy of the bot inside another checkout could log in with that checkout's token. A variable
+  already set in the environment still wins (#79).
+- Members who left a server no longer show in its `/birthday list`, `/birthday upcoming`, monthly
+  post or daily greeting. The bot removes their birthday from that server, and deletes it when no
+  other server has it. A post or greeting whose members have all left is not sent (#80).
+
 ## [0.2.0] - 2026-10-12
 
 Daily birthday greetings, a Compose stack with a health check for running the bot on one host,
