@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `uv.lock` moves filelock from 4.1.1 to 4.2.4 and virtualenv from 21.14.7 to 21.14.13, past the
+  advisories that failed CI's dependency scan. Both come in only through pre-commit, a development
+  tool, so the bot's Docker image does not change (#83).
+
 ## [0.2.0] - 2026-10-12
 
 Daily birthday greetings, a Compose stack with a health check for running the bot on one host,
