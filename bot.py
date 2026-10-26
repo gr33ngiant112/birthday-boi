@@ -818,10 +818,12 @@ def main(argv=()):
         style="{",
     )
 
-    # The settings come from the environment, after load_dotenv() adds those in a .env file if
-    # there is one. It never overrides a variable that is already set, so in a container the
-    # env_file's values win; the image has no .env (.dockerignore).
-    load_dotenv()
+    # The settings come from the environment, after load_dotenv() adds those in the .env beside
+    # bot.py if there is one. Only that file: with no path, python-dotenv would also search the
+    # folders above, so a worktree inside a clone would read the clone's .env and token (#75).
+    # It never overrides a variable that is already set, so in a container the env_file's values
+    # win; the image has no .env (.dockerignore).
+    load_dotenv(pathlib.Path(__file__).with_name(".env"))
     HEARTBEAT_FILE = os.getenv("HEARTBEAT_FILE") or DEFAULT_HEARTBEAT_FILE
     if args.healthcheck:
         age = heartbeat_age(HEARTBEAT_FILE)
