@@ -41,7 +41,15 @@ If you no longer share a server with the bot, you cannot run `/birthday forget`.
 
 ## When you leave a server
 
-Leaving a server deletes nothing. You stay on that server's list, and `/birthday list`, `/birthday upcoming`, the monthly post and the daily greetings there still show your birthday, until you run `/birthday forget`.
+After you leave a server, the bot deletes your birthday from it the next time it would show it there:
+
+- `/birthday list` checks everyone on the server's list, so the next time anyone there runs it, your birthday is deleted.
+- `/birthday upcoming` and the monthly post check only the members they would show, so they delete it only when your birthday is in their range.
+- The daily greeting checks only the members whose birthday it is, so it deletes it on your birthday.
+
+The bot deletes it only after Discord confirms you are no longer a member. If no other server has your birthday, the bot deletes it outright, with your `show_age` choice and your list of servers. If another server has it, that server still sees it.
+
+If Discord doesn't answer, nothing is deleted and your birthday shows as before. If the delete fails, your birthday is hidden, and the bot tries the delete again at the next check. Until a check deletes it, your birthday stays in the bot's database. To delete it from every server at once, run `/birthday forget` before you leave.
 
 ## When the bot leaves a server
 

@@ -15,8 +15,13 @@
   responses would go through Discord's webhook endpoints instead; it records the
   payload discord.py would build for each, embeds included, and the text the member
   reads in it, and carries the member's permissions.
+  The gateway also answers the member checks (#74): a fake websocket answers Request
+  Guild Members from every member the test added, cached or not, through discord.py's
+  own chunk parser, and a fake Get Guild Member answers with the member or Discord's 404.
+  gateway.leave() removes a member, as when they leave the server.
 """
 
+import asyncio
 import copy
 import datetime
 import itertools
@@ -173,6 +178,67 @@ def member_payload(user_id, name, *, nick=None, is_bot=False):
     }
 
 
+# Discord's JSON error code for a member who is not in the server.
+UNKNOWN_MEMBER = 10007
+
+
+class RunningLoop:
+    """Stands in for ConnectionState.loop, which login sets and the tests never do: each
+    asyncio.run() has a loop of its own, and discord.py's ChunkRequest makes its futures on
+    this one."""
+
+    def __getattr__(self, name):
+        return getattr(asyncio.get_running_loop(), name)
+
+
+class FakeWebSocket:
+    """The gateway websocket, as far as Guild.query_members uses it.
+
+    request_chunks() is Request Guild Members (op 8). Like Discord, the fake answers a request by
+    user_ids with the guild's members among them, every member the test added, cached or not,
+    and at most `limit` of them, in one Guild Members Chunk with the request's nonce. The answer
+    arrives on the next turn of the event loop, through ConnectionState.parse_guild_members_chunk,
+    as a gateway event would. More than 100 user_ids fails the test: Discord refuses them.
+
+    gateway.websocket_mode picks another outcome:
+    - "ready": a READY arrives instead, after a reconnect with a new session; discord.py's
+      parse_ready calls clear_chunk_requests(None), which answers each pending request with the
+      members received so far, none.
+    - "silent": no answer, so discord.py's wait times out.
+    - "closed": the socket is closed, so sending raises ConnectionClosed.
+    """
+
+    def __init__(self, gateway):
+        self.gateway = gateway
+
+    async def request_chunks(self, guild_id, query=None, *, limit, user_ids=None, presences=False, nonce=None):
+        gateway = self.gateway
+        gateway.member_requests.append({"guild_id": guild_id, "user_ids": list(user_ids or []), "limit": limit})
+        if query is not None or not user_ids or presences:
+            pytest.fail(f"the bot should ask for members by user_ids only, without presences; asked {query!r}")
+        if len(user_ids) > 100:
+            pytest.fail(f"Discord refuses a member request with more than 100 user_ids; got {len(user_ids)}")
+        if gateway.websocket_mode == "closed":
+            raise discord.ConnectionClosed(types.SimpleNamespace(close_code=1006), shard_id=None)
+        loop = asyncio.get_running_loop()
+        if gateway.websocket_mode == "ready":
+            loop.call_soon(gateway.state.clear_chunk_requests, None)
+            return
+        if gateway.websocket_mode == "silent":
+            return
+        members = gateway.members.get(guild_id, {})
+        found = [members[int(user_id)] for user_id in user_ids if int(user_id) in members]
+        chunk = {
+            "guild_id": str(guild_id),
+            "members": [member_payload(user_id, name) for user_id, name in found[:limit]],
+            "chunk_index": 0,
+            "chunk_count": 1,
+            "not_found": [str(user_id) for user_id in user_ids if int(user_id) not in members],
+            "nonce": nonce,
+        }
+        loop.call_soon(gateway.state.parse_guild_members_chunk, chunk)
+
+
 class Gateway:
     """Feeds fake gateway payloads to the bot client's ConnectionState and records sends."""
 
@@ -181,6 +247,14 @@ class Gateway:
         self.sent = []  # (channel_id, request payload), in send order
         self._ids = itertools.count(1)
         self.bot_user = discord.ClientUser(state=state, data=user_payload(BOT_ID, BOT_NAME, is_bot=True))
+        # guild id -> {user id: (user id, name)}: every member of each guild, cached or not.
+        self.members = {}
+        self.websocket = FakeWebSocket(self)
+        self.connected = True  # False: no websocket, as before the bot connects
+        self.websocket_mode = "answer"
+        self.member_requests = []  # each Request Guild Members: guild_id, user_ids and limit
+        self.member_fetches = []  # (guild id, user id) of each Get Guild Member, in order
+        self.fetch_errors = {}  # user id -> the exception Get Guild Member raises for them
 
     @classmethod
     def install(cls, monkeypatch, client):
@@ -188,10 +262,40 @@ class Gateway:
         # Start from empty caches; monkeypatch puts the originals back afterwards.
         monkeypatch.setattr(state, "_guilds", {})
         monkeypatch.setattr(state, "_users", weakref.WeakValueDictionary())
+        monkeypatch.setattr(state, "_chunk_requests", {})
         gateway = cls(state)
         monkeypatch.setattr(state, "user", gateway.bot_user)  # what READY sets
+        monkeypatch.setattr(state, "loop", RunningLoop())
+        # Client._get_websocket returns client.ws. Replacing the state's hook leaves client.ws
+        # None, so the heartbeat task still sees no connection.
+        monkeypatch.setattr(state, "_get_websocket", gateway.get_websocket)
         monkeypatch.setattr(state.http, "send_message", gateway.send_message)
+        monkeypatch.setattr(state.http, "get_member", gateway.get_member)
         return gateway
+
+    def get_websocket(self, guild_id=None, *, shard_id=None):
+        return self.websocket if self.connected else None
+
+    async def get_member(self, guild_id, member_id):
+        """Get Guild Member: the member's payload, or Discord's 404 "Unknown Member"."""
+        self.member_fetches.append((int(guild_id), int(member_id)))
+        if int(member_id) in self.fetch_errors:
+            raise self.fetch_errors[int(member_id)]
+        member = self.members.get(int(guild_id), {}).get(int(member_id))
+        if member is None:
+            raise discord.NotFound(
+                types.SimpleNamespace(status=404, reason="Not Found"),
+                {"code": UNKNOWN_MEMBER, "message": "Unknown Member"},
+            )
+        return member_payload(*member)
+
+    def leave(self, guild, user):
+        """user, a (user_id, name) member, leaves guild. The bot, without the members intent, gets
+        no event for it; a member in voice leaves the voice channel, and so the cache."""
+        del self.members[guild.id][user[0]]
+        member = guild.get_member(user[0])
+        if member is not None:
+            guild._remove_member(member)
 
     def add_guild(self, guild_id, name, members, *, uncached=(), text_channel="general"):
         """Add a guild as GUILD_CREATE would, with a text channel and a voice channel.
@@ -251,6 +355,9 @@ class Gateway:
                 }
                 for user_id, _ in members
             ],
+        }
+        self.members[guild_id] = {
+            user_id: (user_id, user_name) for user_id, user_name in [(BOT_ID, BOT_NAME), *members, *uncached]
         }
         return self.state._add_guild_from_data(payload)
 
