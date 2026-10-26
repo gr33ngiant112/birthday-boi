@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The bot reads only the `.env` file beside `bot.py`. It used to search the folders above as well,
+  so a copy of the bot inside another checkout could log in with that checkout's token. A variable
+  already set in the environment still wins (#79).
+- Members who left a server no longer show in its `/birthday list`, `/birthday upcoming`, monthly
+  post or daily greetings. The bot removes their birthday from that server once Discord confirms
+  they left, and deletes it outright when no other server has it. If Discord doesn't answer, the
+  members not yet checked show as before and are not deleted. A post or greeting whose members have all left is
+  not sent. PRIVACY.md's "When you leave a server" describes when the delete happens (#80).
+
 ### Security
 
 - `uv.lock` moves filelock from 4.1.1 to 4.2.4 and virtualenv from 21.14.7 to 21.14.13, past the
