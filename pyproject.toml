@@ -5,7 +5,7 @@
 [project]
 name = "birthday-boi"
 # The release version, as CHANGELOG.md lists it (uv requires one).
-version = "0.2.0"
+version = "0.3.0"
 # One Python minor version. Upgrades to the next one are made by hand: requires-python,
 # .python-version and the Dockerfile's python:3.12-slim name the same version.
 requires-python = ">=3.12,<3.13"
