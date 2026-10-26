@@ -54,8 +54,8 @@ def test_bot_py_and_core_py_call_no_print():
 
 
 # `python bot.py --healthcheck` in a fresh interpreter, where nothing has set up logging, as in the
-# image. load_dotenv() is replaced first: from bot.py it reads a .env in the repository or any
-# directory above it. Client.run() is refused, as in tests/test_smoke.py.
+# image. load_dotenv() is replaced first: it reads the .env beside the repository's bot.py, a
+# developer's .env. Client.run() is refused, as in tests/test_smoke.py.
 HEALTHCHECK = """
 import runpy
 import sys

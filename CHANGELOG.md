@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
+Members who left a server drop off its lists, posts and greetings, and the bot reads only the `.env`
+beside `bot.py`. No command changed, so this release needs no `python bot.py --sync`. If you run
+`python bot.py` with a `.env` in a folder above `bot.py`, move it beside `bot.py`. Compose is not
+affected: it passes `.env` to the container itself.
+
+### Fixed
+
+- The bot reads only the `.env` file beside `bot.py`. It used to search the folders above as well,
+  so a copy of the bot inside another checkout could log in with that checkout's token. A variable
+  already set in the environment still wins (#79).
+- Members who left a server no longer show in its `/birthday list`, `/birthday upcoming`, monthly
+  post or daily greetings. The bot removes their birthday from that server once Discord confirms
+  they left, and deletes it outright when no other server has it. If Discord doesn't answer, the
+  members not yet checked show as before and are not deleted. A post or greeting whose members
+  have all left is not sent. PRIVACY.md's "When you leave a server" describes when the delete
+  happens (#80).
+
+### Security
+
+- `uv.lock` moves filelock from 4.1.1 to 4.2.4 and virtualenv from 21.14.7 to 21.14.13, past the
+  advisories that failed CI's dependency scan. Both come in only through pre-commit, a development
+  tool, so the bot's Docker image does not change (#83).
+
 ## [0.2.0] - 2026-10-12
 
 Daily birthday greetings, a Compose stack with a health check for running the bot on one host,
@@ -102,6 +127,7 @@ that server, asks before showing anyone's birth year or age, and runs from a Doc
 - Dropping spaCy removed setuptools and its advisory (GHSA-h35f-9h28-mq5c) from the dependencies
   (#62).
 
-[Unreleased]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gr33ngiant112/birthday-boi/releases/tag/v0.1.0
