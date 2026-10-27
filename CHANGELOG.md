@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-27
+
+A test-suite release: the bot and its commands do not change, so this release needs no
+`python bot.py --sync` and no change to `.env` or Compose.
+
 ### Changed
 
 - The test suite refuses Redis KEYS and SCAN in every test, however they are sent: as a method,
@@ -134,7 +139,8 @@ that server, asks before showing anyone's birth year or age, and runs from a Doc
 - Dropping spaCy removed setuptools and its advisory (GHSA-h35f-9h28-mq5c) from the dependencies
   (#62).
 
-[Unreleased]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/gr33ngiant112/birthday-boi/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/gr33ngiant112/birthday-boi/releases/tag/v0.1.0
