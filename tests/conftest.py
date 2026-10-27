@@ -19,6 +19,8 @@
   Guild Members from every member the test added, cached or not, through discord.py's
   own chunk parser, and a fake Get Guild Member answers with the member or Discord's 404.
   gateway.leave() removes a member, as when they leave the server.
+- keys_and_scan_calls (in every test): the fake server refuses KEYS and SCAN from bot.py's
+  asyncio clients, and a test that sent either fails (#31).
 """
 
 import asyncio
@@ -33,6 +35,8 @@ import discord
 import discord.ext.tasks
 import fakeredis
 import pytest
+from fakeredis._helpers import SimpleError
+from fakeredis.aioredis import AsyncFakeSocket
 
 # Importing bot must not start the client (test_smoke.py checks it). Refuse
 # Client.run here too, so a regression fails the run instead of logging in with
@@ -80,6 +84,38 @@ def fake_redis(monkeypatch):
     server = fakeredis.FakeServer()
     monkeypatch.setattr(bot, "redis_client", fakeredis.FakeAsyncRedis(server=server, decode_responses=True))
     return FakeStore(server=server, decode_responses=True)
+
+
+# The Redis commands that walk every key in the database (#25). The bot reads and deletes only
+# keys it can name, so it never needs them.
+WALKS_EVERY_KEY = ("keys", "scan")
+
+
+@pytest.fixture(autouse=True)
+def keys_and_scan_calls(monkeypatch):
+    """#31: in every test, the fake Redis server refuses KEYS and SCAN from the asyncio clients
+    bot.py uses, however they are sent: keys(), scan(), scan_iter(), execute_command(), or in a
+    pipeline or a transaction. The client gets a Redis error, which bot.py may catch and log, so
+    each refused command is also noted, and a test that sent one fails at teardown. The test gets
+    the list of names, to check it itself.
+
+    The synchronous FakeStore, which tests seed and inspect the server with, may still use KEYS.
+    The patch replaces fakeredis's private command lookup: if a fakeredis update renames it, every
+    test errors, and test_store.py checks that each way of sending the commands is still refused.
+    """
+    calls = []
+    name_to_func = AsyncFakeSocket._name_to_func
+
+    def refuse_walks(socket, cmd_name):
+        if cmd_name in WALKS_EVERY_KEY:
+            calls.append(cmd_name)
+            raise SimpleError(f"ERR {cmd_name.upper()} walks every key in the database (#31)")
+        return name_to_func(socket, cmd_name)
+
+    monkeypatch.setattr(AsyncFakeSocket, "_name_to_func", refuse_walks)
+    yield calls
+    if calls:
+        pytest.fail(f"Redis was sent {', '.join(name.upper() for name in calls)}, which walks every key (#31)")
 
 
 class FrozenClock:
