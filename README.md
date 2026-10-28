@@ -42,6 +42,8 @@ docker run --rm --network none birthday-boi:test
 
 The first command builds the bot's image. The second builds the test image: the bot's image plus the dev tools and the tests. The third runs `ruff check`, `ruff format --check` and the tests in a container with no network, and exits with a non-zero status if any of them fails. `.dockerignore` keeps `.env` files out of the build context, so they never reach an image.
 
+`.gitignore` keeps env files out of git; CI's trivy job scans dependencies and committed secrets; Dependabot updates dependencies.
+
 ### Installing
 
 1. Create an application in the Discord [Developer Portal](https://discord.com/developers/applications). For development, use a separate application, as "Running against a test server" explains.

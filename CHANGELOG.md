@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- CI's security checks are one trivy job, which fails on a fixable HIGH or CRITICAL vulnerability
+  in `uv.lock` or a secret in a committed file. It replaces the gitleaks and osv-scanner jobs, and
+  `osv-scanner.toml` is gone. `.gitignore` now also ignores `.env.*` files, except `*.example`.
+
 ## [0.4.0] - 2026-10-27
 
 A test-suite release: the bot and its commands do not change, so this release needs no

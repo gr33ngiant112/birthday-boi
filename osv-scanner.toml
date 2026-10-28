@@ -1,4 +1,0 @@
-# Advisories the CI dependency scan (osv-scanner on uv.lock) does not fail on. Each entry needs
-# a reason and an ignoreUntil date; after that date the scan fails on it again.
-#
-# None at the moment. CI names this file with --config, so it stays when it has no entries.
