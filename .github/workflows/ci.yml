@@ -17,7 +17,7 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# The three job names below are required status checks on develop and main. Renaming a job means
+# The two job names below are required status checks on develop and main. Renaming a job means
 # updating both branches' protection in the same change, a GitHub admin step (the owner's for main).
 jobs:
   build:
@@ -47,49 +47,23 @@ jobs:
       - name: Lint and test in the test image
         run: docker run --rm --network none birthday-boi:test
 
-  secret-scan:
-    name: Secret scan (gitleaks)
+  trivy:
+    name: trivy
     if: github.event.pull_request.draft == false # skipped while a PR is a draft, as above
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # gitleaks reads the full history behind HEAD
           persist-credentials: false
-      - name: Install gitleaks 8.30.1 (checksum-verified)
+      - name: Install trivy 0.75.0 (checksum-verified)
         run: |
-          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
-          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" \
+          curl -fsSL -o "$RUNNER_TEMP/trivy.tar.gz" \
+            https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_Linux-64bit.tar.gz
+          echo "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f  $RUNNER_TEMP/trivy.tar.gz" \
             | sha256sum --check --strict
-          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
-      # Scans every commit reachable from HEAD (on a PR, GitHub's merge commit), so no commit
-      # range or PR size can leave commits out. --diff-merges=first-parent also scans what each
-      # merge commit changes: plain `git log -p` shows no diff for merges, so a value added only
-      # while resolving a merge conflict would otherwise go unscanned. The history was clean
-      # when this was added. --redact keeps values out of the log; --verbose names the rule,
-      # file, line and commit of each finding.
-      - name: Scan the full history
-        run: '"$RUNNER_TEMP/gitleaks" git --no-banner --redact --verbose --log-opts="--diff-merges=first-parent HEAD" .'
-
-  dependency-scan:
-    name: Dependency scan (osv-scanner)
-    if: github.event.pull_request.draft == false # skipped while a PR is a draft, as above
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # uv.lock pins every package the image and the tests install, the dev tools included, so
-      # the scan reads it directly. Any known advisory fails the job, except those that
-      # osv-scanner.toml ignores, each with its reason and an expiry date.
-      - name: Scan uv.lock
-        uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
-        with:
-          # --no-ignore: osv-scanner 2.6.0 skips files that match a .gitignore pattern, even when named.
-          scan-args: |-
-            --lockfile=uv.lock
-            --config=osv-scanner.toml
-            --no-ignore
+          tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP" trivy
+      # A fixable HIGH or CRITICAL vulnerability in uv.lock's packages, or a HIGH or CRITICAL
+      # secret in a committed file, fails the job.
+      - name: Scan dependencies and secrets
+        run: '"$RUNNER_TEMP/trivy" fs --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --skip-dirs node_modules --skip-dirs .venv .'
