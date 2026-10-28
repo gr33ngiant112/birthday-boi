@@ -63,7 +63,9 @@ jobs:
           echo "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f  $RUNNER_TEMP/trivy.tar.gz" \
             | sha256sum --check --strict
           tar -xzf "$RUNNER_TEMP/trivy.tar.gz" -C "$RUNNER_TEMP" trivy
-      # A fixable HIGH or CRITICAL vulnerability in uv.lock's packages, or a HIGH or CRITICAL
-      # secret in a committed file, fails the job.
+      # A fixable MEDIUM, HIGH or CRITICAL vulnerability in uv.lock's packages, or any secret in a
+      # committed file, fails the job.
       - name: Scan dependencies and secrets
-        run: '"$RUNNER_TEMP/trivy" fs --scanners vuln,secret --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --skip-dirs node_modules --skip-dirs .venv .'
+        run: |
+          "$RUNNER_TEMP/trivy" fs --scanners vuln --severity MEDIUM,HIGH,CRITICAL --ignore-unfixed --exit-code 1 --skip-dirs node_modules --skip-dirs .venv .
+          "$RUNNER_TEMP/trivy" fs --scanners secret --exit-code 1 --skip-dirs node_modules --skip-dirs .venv .
