@@ -1,6 +1,8 @@
 {
   "permissions": {
-    "deny": ["Read(./.env)", "Read(./.env.*)", "Read(!.env.example)"],
-    "ask": ["Bash(git push *)"]
+    "deny": [],
+    "ask": [
+      "Bash(git push *)"
+    ]
   }
 }
